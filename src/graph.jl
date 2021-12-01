@@ -57,12 +57,12 @@ function interventionGraphSet(data_collection::Dict, interventions::Vector{Strin
     graph_collection = interventionGraphSet(
         n_interventions,
         Array{interventionGraph}(undef, n_interventions),
-        reduce(vcat, values(data_collection))
+        dropmissing(reduce(vcat, values(data_collection)))
     )
 
     for i in range(1, stop = n_interventions)
         graph_collection.graphs[i] = interventionGraph(
-            data_collection[interventions[i]], 
+            dropmissing(data_collection[interventions[i]]), 
             [interventions[i]]
         )
     end
