@@ -233,6 +233,90 @@ function parse_skeleton(posterior::Vector{Bijectors.MultivariateTransformed}, na
     return result
 end
 
+function posterior_predictive(posterior::Bijectors.MultivariateTransformed, names::Vector{String}, sym2range::NamedTuple, data::DataFrame)
+
+    cols = setdiff(ko_targets(), ko_controls())
+    x_name = names[1]
+    y_name = names[2]
+    z_names = setdiff(cols, [x_name, y_name])
+
+    @assert length(z_names) >= 1
+
+    n_sims = 1000
+    n_rows = nrow(data)
+    samples = rand(posterior, n_sims) # sample from posterior
+
+    lambda_x_index = sym2range.lambda_x[1][1]
+    beta_x_interact_i_index = sym2range.beta_i[1][1]
+    beta_x_interact_y_index = sym2range.beta_i[1][2]
+    log_variance_intercept_index = sym2range.log_variance_intercept[1][1]
+    log_variance_beta_x_interact_i_index = sym2range.log_variance_beta_i[1][1]
+    log_variance_beta_x_interact_y_index = sym2range.log_variance_beta_i[1][2]
+    intercept_index = sym2range.intercept[1][1]
+
+    beta_x_indices = sym2range.beta_x
+    beta_x_indices = map(x -> x[1], beta_x_indices) # convert 27:27 to 27
+
+
+    x_interact_i = Vector{Float64}(undef, n_rows)
+    x_interact_y = Vector{Float64}(undef, n_rows)
+    x = @view data[!, x_name]
+    z = Matrix(@view data[:, z_names])
+    for r in 1:n_rows
+        if data.intervention[r] != x_name
+            x_interact_i[r] = 0.0
+        else 
+            x_interact_i[r] = 1.0
+        end
+        if data.intervention[r] != y_name
+            x_interact_y[r] = 0.0
+        else 
+            x_interact_y[r] = x[r] 
+        end
+    end
+
+    # rows are data points, columns are sims
+    n_quantiles = 5
+    yhat = Matrix{Float64}(undef, n_rows, n_sims)
+    sigma_hat = Matrix{Float64}(undef, n_rows, n_sims)
+    ypred = Matrix{Float64}(undef, n_rows, n_sims)
+    ypred_quantiles = Matrix{Float64}(undef, n_rows, n_quantiles)
+
+    for i in 1:n_sims
+        yhat[:, i] = samples[intercept_index, i] .+ 
+                   hcat(x, z) * samples[beta_x_indices, i] .+
+                   samples[beta_x_interact_i_index, i] .* x_interact_i .+
+                   samples[beta_x_interact_y_index, i] .* x_interact_y
+
+        sigma_hat[:, i] = exp.(samples[log_variance_intercept_index, i] .+
+                          samples[log_variance_beta_x_interact_i_index, i] .* x_interact_i .+
+                          samples[log_variance_beta_x_interact_y_index, i] .* x_interact_y)
+
+        dist = MvNormal(yhat[:, i], Diagonal(sqrt.(sigma_hat[:, i])))
+        ypred[:, i] = rand(dist, 1)
+    end
+
+    for i in 1:n_rows
+        ypred_quantiles[i, :] = quantile(yhat[i, :], [0.025, 0.25, 0.50, 0.75, 0.95])
+    end
+    
+    return ypred_quantiles
+end
+
+function posterior_predictive(posterior::Vector{Bijectors.MultivariateTransformed}, names::Vector{Vector{String}}, sym2range::Vector{NamedTuple}, data::DataFrame)
+
+    pred = Vector{Matrix{Float64}}(undef, length(posterior))
+
+    @info "$(now()) finding posterior predictive"
+
+    Threads.@threads for i in 1:length(posterior)
+    # for i in 1:length(posterior)
+        pred[i] = posterior_predictive(posterior[i], names[i], sym2range[i], data)
+    end
+
+    return pred
+end
+
 function round_numeric_print(df::DataFrame)
     coltypes = eltype.(eachcol(df))
 
