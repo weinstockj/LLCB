@@ -1,9 +1,9 @@
 function figure_output_dir()
     dir = output_dir()
-    return dir
+    return joinpath(dir, "figures")
 end
 
-function plot_scatter(posterior_quantile::Matrix{Float64}, data::DataFrame, x_name::String, y_name::String)
+function plot_scatter(posterior_quantile::Matrix{Float64}, data::DataFrame, x_name::String, y_name::String, beta_x::Float64, intercept::Float64, beta_pip::Float64, beta_x_interact_i::Float64)
     out_dir = figure_output_dir()
     data_copy = deepcopy(data)
 
@@ -13,11 +13,11 @@ function plot_scatter(posterior_quantile::Matrix{Float64}, data::DataFrame, x_na
 
     @assert length(z_names) > 10
 
-    z = Matrix(@view data_copy[:, z_names])
-    lambda = 1.0
-    proj_z = I - z * inv(z' * z + lambda * I) * z'
-    data_copy.y_resid = proj_z * data_copy[!, y_name]
-    data_copy.x_resid = proj_z * data_copy[!, x_name]
+    # z = Matrix(@view data_copy[:, z_names])
+    # lambda = 1.0
+    # proj_z = I - z * inv(z' * z + lambda * I) * z'
+    # data_copy.y_resid = proj_z * data_copy[!, y_name]
+    # data_copy.x_resid = proj_z * data_copy[!, x_name]
 
     intervention = Vector{String}(undef, nrow(data_copy))
     
@@ -31,37 +31,67 @@ function plot_scatter(posterior_quantile::Matrix{Float64}, data::DataFrame, x_na
         end
     end
 
+    rsq = cor(data_copy[!, y_name], posterior_quantile[:, 3]) ^ 2
+
+    # theme = theme_minimal()
+    # set_theme!()
     data_copy.setting = intervention
 
-    marginal_p = plot(
-        layer(
-            data_copy,
-            x = Symbol(x_name),
-            y = Symbol(y_name),
-            color = :setting,
-            Geom.point
-        ),
-        layer(
-            x = data_copy[!, x_name],
-            y = posterior_quantile[:, 3],
-            ymin = posterior_quantile[:, 1],
-            ymax = posterior_quantile[:, 5],
-            Geom.errorbar
-        ),
-        Guide.xlabel(x_name),
-        Guide.ylabel(y_name),
-        Theme(
-            background_color = color("white"),
-            major_label_font_size = 17pt,
-            minor_label_font_size = 13pt,
-            panel_stroke=color("black"),
-            default_color = color("black"),
-            highlight_width = 1pt
-        )
+    fig = Figure(resolution = (800, 600), fontsize = 20)
+    ax = fig[1, 1] = Axis(
+        fig, 
+        xlabel = x_name, 
+        ylabel = y_name, 
+        title = "Rsq = $(sprintf1("%0.2f", rsq)), β1 = $(sprintf1("%0.2f", beta_x)), PIP = $(sprintf1("%0.2f", beta_pip)), β2 = $(sprintf1("%0.2f", beta_x_interact_i))"
     )
+    for (i, g) in enumerate(unique(data_copy.setting))
+        
+        ind = data_copy.setting .== g
+        sub = @view data_copy[ind, :]
+
+        @assert nrow(sub) >= 3
+
+        rangebars!(ax, sub[!, x_name], posterior_quantile[ind, 1], posterior_quantile[ind, 5], whiskerwidth = 5, alpha = 0.2)
+        scatter!(ax, sub[!, x_name], sub[!, y_name], alpha = 0.5, label = g)
+    end
+
+    abline!(ax, intercept, beta_x, color = :gray, linestyle = :dash, alpha = 0.5)
+
+    # axislegend()
+    leg = Legend(fig, ax)
+    fig[1, 2] = leg
 
 
-    draw(SVG(joinpath(out_dir, "posterior_scatter_$(x_name)_$(y_name).svg"), 6inch, 4inch), marginal_p)
+    # marginal_p = plot(
+    #     layer(
+    #         data_copy,
+    #         x = Symbol(x_name),
+    #         y = Symbol(y_name),
+    #         color = :setting,
+    #         Geom.point
+    #     ),
+    #     layer(
+    #         x = data_copy[!, x_name],
+    #         y = posterior_quantile[:, 3],
+    #         ymin = posterior_quantile[:, 1],
+    #         ymax = posterior_quantile[:, 5],
+    #         Geom.errorbar
+    #     ),
+    #     Guide.xlabel(x_name),
+    #     Guide.ylabel(y_name),
+    #     Theme(
+    #         background_color = color("white"),
+    #         major_label_font_size = 17pt,
+    #         minor_label_font_size = 13pt,
+    #         panel_stroke=color("black"),
+    #         default_color = color("black"),
+    #         highlight_width = 1pt
+    #     )
+    # )
+
+
+    save(joinpath(out_dir, "posterior_scatter_$(x_name)_$(y_name).png"), fig)
+    # draw(PNG(joinpath(out_dir, "posterior_scatter_$(x_name)_$(y_name).png"), 6inch, 4inch), marginal_p)
 end
 
 function plot_scatter(beta_x::Float64, intercept::Float64, beta_x_interact_i::Float64, data::DataFrame, x_name::String, y_name::String)
@@ -191,7 +221,128 @@ function plot_scatter(parsed_skeleton::DataFrame, data::DataFrame, posterior_qua
             posterior_quantile[i],
             data_subset,
             parsed_skeleton.x[i],
-            parsed_skeleton.y[i]
+            parsed_skeleton.y[i],
+            parsed_skeleton.beta_x[i],
+            parsed_skeleton.intercept[i],
+            parsed_skeleton.beta_pip[i],
+            parsed_skeleton.beta_x_interact_i[i]
         )
     end
+end
+
+function plot_skeleton(s::posteriorSkeleton)
+    out_dir = figure_output_dir()
+    
+    nlabels = Vector{String}(undef, nv(s.g))
+    elabels = Vector{String}(undef, ne(s.g))
+    edge_color = Vector{Float64}(undef, ne(s.g))
+    for i in 1:nv(s.g)
+        nlabels[i] = s.g.vprops[i][:name]
+    end
+    min_weight = minimum(s.skeleton.beta_x)
+    max_weight = maximum(s.skeleton.beta_x)
+
+    for (i, val) in enumerate(values(s.g.eprops))
+        edge_color[i] = val[:weight]
+        # elabels[i] = string(elabels_color[i])
+    end
+    # set_theme!(resolution = (900, 900))
+    fig = Figure(resolution=(800,550))
+    fig[1,1] = title = Label(fig, "Skeleton", textsize=20)
+    title.tellwidth = false
+
+    fig[2,1] = ax = Axis(fig)
+    p = graphplot!(ax, s.g;
+        layout = SFDP(Ptype=Float32, tol=0.01, C=3.0, K=30.0),
+        # layout = Spectral(dim = 2),
+        # layout = Spring(),
+        nlabels = nlabels, 
+        # elabels = elabels
+        edge_color = edge_color,
+        edge_width = 5.0,
+        edge_attr=(colormap=Reverse(:RdBu_5), colorrange = (min_weight, max_weight))
+    )
+    # offsets = 0.15 * (p[:node_pos][] .- p[:node_pos][][1])
+    # p.nlabels_offset[] = offsets
+    hidedecorations!(ax); hidespines!(ax)
+    ax.aspect = DataAspect()
+    # autolimits!(ax)
+    #
+    # println("p[:node_pos] = $(p[:node_pos])")
+    #
+    node_x = Vector{Float32}(undef, nv(s.g))
+    node_y = Vector{Float32}(undef, nv(s.g))
+    # println("p[:node_pos][] = $(p[:node_pos][])")
+    # println("p[:node_pos][:, 1] = $(p[:node_pos][:, 1])")
+
+    idx = 0
+    for xy in p[:node_pos][]
+        idx = idx + 1
+        node_x[idx] = xy[1]
+        node_y[idx] = xy[2]
+    end
+
+    # println("x = $node_x \n, y = $node_y")
+    println("debug me 2")
+    buffer_x = 45
+    buffer_y = 40
+    xlims!(ax, minimum(node_x) - buffer_x, maximum(node_x) + buffer_x)
+    ylims!(ax, minimum(node_y) - buffer_y, maximum(node_y) + buffer_y)
+
+
+    fig[2,2] = cb = Colorbar(fig, p.plots[1], label = "β1", vertical=true)
+
+    save(joinpath(out_dir, "undirected_skeleton_plot.png"), fig)
+    save(joinpath(out_dir, "undirected_skeleton_plot.pdf"), fig)
+    set_theme!()
+end
+
+function plot_skeleton_as_matrix(s::posteriorSkeleton)
+
+    out_dir = figure_output_dir()
+
+    genes = ["CBFB", "TNFAIP3", "KLF2", "FOXK1", "ATXN7L3", "ZNF217", "HIVEP2", "IRF2", "MYB", "IRF1", 
+             "MED12", "YY1", "MBD2", "RELA", "ETS1", "PTEN", "FOXP1", "JAK3", "KMT2A", "IRF4", "GATA3", 
+             "STAT5A", "STAT5B", "IL2RA"]
+
+    X = genes
+    Y = reverse(genes)
+    N_genes = length(X)
+
+    values = zeros(N_genes, N_genes)
+
+    for i in 1:N_genes
+        for j in 1:N_genes
+            val = s.skeleton[(s.skeleton.x .== X[i]) .& (s.skeleton.y .== Y[j]), "beta_x"]
+            @assert length(val) <= 1
+            if length(val) == 1
+                values[i, j] = val[1]
+            end
+        end
+    end
+
+    fig = Figure(resolution=(800, 700))
+
+    fig[1,1] = ax = Axis(fig)
+
+    heatmap!(
+        ax,
+        1:N_genes,
+        1:N_genes,
+        Float32.(values),
+        colormap = Reverse(:RdBu_8),
+        colorange = (-1, 1)
+    )
+    fig[1,2] = cb = Colorbar(fig, colormap = Reverse(:RdBu_8), limits = (-1, 1), label = "β1", vertical=true)
+
+    ax.xticks = (1:N_genes, X)
+    ax.xticklabelrotation = 45.0
+    ax.yticks = (1:N_genes, Y)
+
+    ax.aspect = DataAspect()
+
+    save(joinpath(out_dir, "undirected_skeleton_matrix.png"), fig)
+    save(joinpath(out_dir, "undirected_skeleton_matrix.pdf"), fig)
+    set_theme!()
+
 end
