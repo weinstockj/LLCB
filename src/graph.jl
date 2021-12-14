@@ -70,3 +70,40 @@ function interventionGraphSet(data_collection::Dict, interventions::Vector{Strin
     return graph_collection
 end
     
+struct posteriorSkeleton
+    g::MetaGraph
+    nv::Int64
+    nodes::Array{String}
+    skeleton::DataFrame
+end
+
+# posteriorSkeleton = posteriorSkeleton2
+
+function posteriorSkeleton(parsed_skel::DataFrame, pip_threshold::Float64 = 0.01)
+    skel = @view parsed_skel[parsed_skel.beta_pip .>= pip_threshold, :]
+    n_rows = nrow(skel)
+    nodes = unique(vcat(skel.x, skel.y))
+    n_vertices = length(nodes)
+    n_edges = n_rows # including for clarity..
+    @info "$(now()) Now constructing graph from $n_vertices nodes and $n_edges edges"
+
+    g = MetaGraph(SimpleGraph(n_vertices))
+
+    for i in 1:n_rows
+        x_node_index = findall(x -> x == skel.x[i], nodes)[1]
+        y_node_index = findall(x -> x == skel.y[i], nodes)[1]
+        add_edge!(g, x_node_index, y_node_index)
+        set_prop!(g, Edge(x_node_index, y_node_index), :weight, parsed_skel.beta_x[i])
+    end
+
+    for i in 1:n_vertices
+        set_prop!(g, i, :name, nodes[i])
+    end
+
+    return posteriorSkeleton(
+        g,
+        n_vertices,
+        nodes,
+        skel
+    )
+end
