@@ -15,7 +15,13 @@ using Turing.Variational
 using Optim
 using Serialization
 using ProgressMeter
-using Cairo, Fontconfig, Gadfly
+using CairoMakie
+using GraphMakie
+using Formatting
+using NetworkLayout
+
+# import Cairo
+# using Gadfly
 
 # Write your package code here.
 include("graph.jl")
