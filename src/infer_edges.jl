@@ -192,7 +192,7 @@ function parse_symbol_map(posterior_vi::Bijectors.MultivariateTransformed, sym2r
 
     n_sims = 1000
     samples = rand(posterior_vi, n_sims) # sample from posterior
-    mean_samples = mean(samples, dims = 2) # means of columns? 
+    mean_samples = mean(samples, dims = 2) # means of columns - posterior expectation estimates
 
     beta_x_index = sym2range.beta_x[1][1]  # e.g., first index is 26:26, second index is 26
     lambda_x_index = sym2range.lambda_x[1][1]
@@ -202,13 +202,19 @@ function parse_symbol_map(posterior_vi::Bijectors.MultivariateTransformed, sym2r
     log_variance_beta_x_interact_i_index = sym2range.log_variance_beta_i[1][1]
     log_variance_beta_x_interact_y_index = sym2range.log_variance_beta_i[1][2]
     intercept_index = sym2range.intercept[1][1]
+    tau_index = sym2range.tau[1][1]
+
+    κ = mean(1.0 ./ (1.0 .+ samples[lambda_x_index] ^ 2 * samples[tau_index] ^ 2))
 
     lambda_pip_threshold = 5.0
 
     return (
         beta_x                         = mean_samples[beta_x_index],
-        beta_pip                       = mean(samples[lambda_x_index, :] .> lambda_pip_threshold),
+        beta_pip_old                   = mean(samples[lambda_x_index, :] .> lambda_pip_threshold),
+        beta_pip                       = 1 - κ,
         lambda_x                       = mean_samples[lambda_x_index],
+        tau                            = mean_samples[tau_index],
+        κ                              = κ,
         beta_x_interact_i              = mean_samples[beta_x_interact_i_index],
         beta_x_interact_y              = mean_samples[beta_x_interact_y_index],
         log_variance_intercept         = mean_samples[log_variance_intercept_index],
