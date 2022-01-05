@@ -210,16 +210,14 @@ end
 
 function plot_scatter(parsed_skeleton::DataFrame, data::DataFrame, posterior_quantile::Vector{Matrix{Float64}})
     
-    Threads.@threads for i in 1:nrow(parsed_skeleton)
-    # for i in 1:nrow(parsed_skeleton)
+    # Threads.@threads for i in 1:nrow(parsed_skeleton)
+    for i in 1:nrow(parsed_skeleton)
         x_name = parsed_skeleton.x[i]
         y_name = parsed_skeleton.y[i]
         @info " $(now()) Now plotting x = $(x_name) and y = $(y_name)"
-        # data_subset = data[:, [x_name, y_name]]
-        data_subset = data
         plot_scatter(
             posterior_quantile[i],
-            data_subset,
+            data,
             parsed_skeleton.x[i],
             parsed_skeleton.y[i],
             parsed_skeleton.beta_x[i],
