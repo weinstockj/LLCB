@@ -1,3 +1,4 @@
+Turing.setprogress!(false)
 @model function bayes_linear(x, y, i, ::Type{T} = Float64) where {T}
     variance_prior ~ truncated(Normal(0, 3), 0, Inf)
     intercept ~ Normal(0.0, 10.0)
@@ -204,7 +205,7 @@ function parse_symbol_map(posterior_vi::Bijectors.MultivariateTransformed, sym2r
     intercept_index = sym2range.intercept[1][1]
     tau_index = sym2range.tau[1][1]
 
-    κ = mean(1.0 ./ (1.0 .+ samples[lambda_x_index] ^ 2 * samples[tau_index] ^ 2))
+    κ = mean(1.0 ./ (1.0 .+ samples[lambda_x_index] .^ 2 .* samples[tau_index] .^ 2))
 
     lambda_pip_threshold = 5.0
 
