@@ -109,8 +109,8 @@ function test_me(data::DataFrame)
    return models_map, models_advi
 end
 
-function estimate_skeleton(data::DataFrame, load_from_cache = false)
-    cols = setdiff(ko_targets(), ko_controls())
+function estimate_skeleton(data::DataFrame, load_from_cache = false, save_to_cache = false, cols = setdiff(ko_targets(), ko_controls()))
+    # cols = setdiff(ko_targets(), ko_controls())
     n_cols = length(cols)
     n_rows = nrow(data)
     n_vals = Int64(n_cols * (n_cols - 1) / 2)
@@ -178,12 +178,12 @@ function estimate_skeleton(data::DataFrame, load_from_cache = false)
 
     @info "$(now()) Done estimating skeleton"
 
-
-    @info "$(now()) Now serializing"
-
-    serialize(joinpath(dir, "values.store"), values)
-    serialize(joinpath(dir, "names.store"), names)
-    serialize(joinpath(dir, "maps.store"), maps)
+    if save_to_cache
+        @info "$(now()) Now serializing"
+        serialize(joinpath(dir, "values.store"), values)
+        serialize(joinpath(dir, "names.store"), names)
+        serialize(joinpath(dir, "maps.store"), maps)
+    end
 
     return values, names, maps
 end
