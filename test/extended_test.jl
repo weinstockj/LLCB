@@ -11,6 +11,14 @@ using Turing: setprogress!
 
 setprogress!(false)
 
+function cortest(x::Vector{Float64}, y::Vector{Float64})
+    if length(x) == length(y)
+        return 2 * ccdf(Normal(), atanh(abs(cor(x, y))) * sqrt(length(x) - 3))
+    else
+        error("x and y have different lengths")
+    end
+end
+
 function zscore(x)
     μ = mean(x)
     σ = std(x)
@@ -32,7 +40,9 @@ function parse_sim_result(parsed_map, θ, x, y, Rsq)
         log_variance_beta_x_interact_y = parsed_map.log_variance_beta_x_interact_y,
         std_x = std(x),
         std_y = std(y),
-        Rsq = Rsq
+        Rsq = Rsq,
+        pearson_cor_x_y = cor(x, y),
+        pearson_cor_pvalue = cortest(x, y)
     )
 end
 
@@ -224,7 +234,7 @@ function write_sims()
     # 3040 seconds overall
     # N_SIMS = 1000 # 4.62 seconds per simulation
     #
-    date = "2022_01_05"
+    date = "2022_01_07"
 
     
     @info "$(now()) running x->y, no z"
