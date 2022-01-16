@@ -77,10 +77,9 @@ struct posteriorSkeleton
     skeleton::DataFrame
 end
 
-# posteriorSkeleton = posteriorSkeleton2
-
 function posteriorSkeleton(parsed_skel::DataFrame, pip_threshold::Float64 = 0.01)
-    skel = @view parsed_skel[parsed_skel.beta_pip .>= pip_threshold, :]
+    # skel = @view parsed_skel[parsed_skel.beta_pip .>= pip_threshold, :]
+    skel = @view parsed_skel[parsed_skel.beta_pip_crude .>= pip_threshold, :]
     n_rows = nrow(skel)
     nodes = unique(vcat(skel.x, skel.y))
     n_vertices = length(nodes)
