@@ -40,13 +40,22 @@ end
     p_i = size(i, 2)
     beta_x = Vector{T}(undef, p_x)
     # tau = 0.10
-    tau ~ truncated(TDist(3), 0, Inf)
+    #
+    global_scale_a ~ truncated(Normal(0, 1), 0, Inf)
+    global_scale_b ~ InverseGamma(0.5, 0.5)
+    tau = global_scale_a * sqrt(global_scale_b)
+    # tau ~ truncated(TDist(3), 0, Inf)
 
     # lambda_x ~ filldist(truncated(Cauchy(0, 1), 0, Inf), p_x)
-    lambda_x ~ filldist(truncated(TDist(3), 0, Inf), p_x) # half T with 5 df
+    # lambda_x ~ filldist(truncated(TDist(3), 0, Inf), p_x) # half T with 5 df
+    #
+    local_scale_a ~ filldist(truncated(Normal(0, 1), 0, Inf), p_x)
+    local_scale_b ~ filldist(InverseGamma(0.5, 0.5), p_x)
+
+    lambda_x = local_scale_a .* sqrt.(local_scale_b)
 
     beta_x .~ Normal.(0, lambda_x .* tau)
-    beta_i ~ filldist(Normal(0, 10.0), p_i)
+    beta_i ~ filldist(Normal(0, 6.0), p_i)
 
     yhat = intercept .+ x * beta_x .+ i * beta_i
 
