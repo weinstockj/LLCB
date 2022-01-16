@@ -14,6 +14,18 @@ function ko_rnaseq_data_path()
     return path
 end
 
+function simulated_data_dir()
+    dir = "/oak/stanford/groups/pritch/users/jweinstk/network_inference/ground_truth_simulation/output"
+    return dir
+end
+
+function simulated_data_paths()
+    files = readdir(simulated_data_dir(), join = true)
+    pattern = "expression_simulation"
+
+    return filter(x -> occursin(pattern, x), files)
+end
+
 function output_dir()
     return "/oak/stanford/groups/pritch/users/jweinstk/network_inference/InferCausalGraph/output/"
 end
@@ -80,6 +92,12 @@ end
 
 function log_and_zscore(x::Vector{Int64})
     x = log10.(Float64.(x) .+ 1.0)
+    x = x .- mean(x)
+    return x ./ std(x)
+end
+
+function log_and_zscore(x::Vector{Float64})
+    x = log10.(x .+ 1.0)
     x = x .- mean(x)
     return x ./ std(x)
 end
