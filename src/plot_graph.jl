@@ -94,11 +94,11 @@ function plot_scatter(posterior_quantile::Matrix{Float64}, data::DataFrame, x_na
     # draw(PNG(joinpath(out_dir, "posterior_scatter_$(x_name)_$(y_name).png"), 6inch, 4inch), marginal_p)
 end
 
-function plot_scatter(beta_x::Float64, intercept::Float64, beta_x_interact_i::Float64, data::DataFrame, x_name::String, y_name::String)
+function plot_scatter(beta_x::Float64, intercept::Float64, beta_x_interact_i::Float64, data::DataFrame, x_name::String, y_name::String, cols = setdiff(ko_targets(), ko_controls()))
     out_dir = figure_output_dir()
     data_copy = deepcopy(data)
 
-    cols = setdiff(ko_targets(), ko_controls())
+    # cols = setdiff(ko_targets(), ko_controls())
     z_names = setdiff(cols, [x_name, y_name])
     # z_names = setdiff(z_names, ["intervention"])
 
@@ -222,7 +222,8 @@ function plot_scatter(parsed_skeleton::DataFrame, data::DataFrame, posterior_qua
             parsed_skeleton.y[i],
             parsed_skeleton.beta_x[i],
             parsed_skeleton.intercept[i],
-            parsed_skeleton.beta_pip[i],
+            # parsed_skeleton.beta_pip[i],
+            parsed_skeleton.beta_pip_crude[i],
             parsed_skeleton.beta_x_interact_i[i]
         )
     end
@@ -245,15 +246,15 @@ function plot_skeleton(s::posteriorSkeleton)
         # elabels[i] = string(elabels_color[i])
     end
     # set_theme!(resolution = (900, 900))
-    fig = Figure(resolution=(800,550))
+    fig = Figure(resolution=(1000,750))
     fig[1,1] = title = Label(fig, "Skeleton", textsize=20)
     title.tellwidth = false
 
     fig[2,1] = ax = Axis(fig)
     p = graphplot!(ax, s.g;
-        layout = SFDP(Ptype=Float32, tol=0.01, C=3.0, K=30.0),
+        layout = SFDP(Ptype=Float32, tol=0.001, C=3.0, K=95.0, iterations = 900),
         # layout = Spectral(dim = 2),
-        # layout = Spring(),
+        # layout = Spring(Ptype = Float32),
         nlabels = nlabels, 
         # elabels = elabels
         edge_color = edge_color,
@@ -311,10 +312,11 @@ function plot_skeleton_as_matrix(s::posteriorSkeleton)
 
     for i in 1:N_genes
         for j in 1:N_genes
-            val = s.skeleton[(s.skeleton.x .== X[i]) .& (s.skeleton.y .== Y[j]), "beta_x"]
+            val = s.skeleton[(s.skeleton.x .== X[j]) .& (s.skeleton.y .== Y[i]), "beta_x"]
             @assert length(val) <= 1
             if length(val) == 1
                 values[i, j] = val[1]
+                # values[j, i] = val[1]
             end
         end
     end
@@ -323,24 +325,27 @@ function plot_skeleton_as_matrix(s::posteriorSkeleton)
 
     fig[1,1] = ax = Axis(fig)
 
+    max_value = maximum(abs.(values))
     heatmap!(
         ax,
         1:N_genes,
         1:N_genes,
         Float32.(values),
-        colormap = Reverse(:RdBu_8),
-        colorange = (-1, 1)
+        colormap = Reverse(:RdBu_7),
+        # colorange = (-1, 1)
+        colorange = (-max_value, max_value)
     )
-    fig[1,2] = cb = Colorbar(fig, colormap = Reverse(:RdBu_8), limits = (-1, 1), label = "β1", vertical=true)
+    
+    fig[1,2] = cb = Colorbar(fig, colormap = Reverse(:RdBu_7), limits = (-max_value, max_value), label = "β1", vertical=true)
 
-    ax.xticks = (1:N_genes, X)
+    ax.xticks = (1:N_genes, Y)
     ax.xticklabelrotation = 45.0
-    ax.yticks = (1:N_genes, Y)
+    ax.yticks = (1:N_genes, X)
 
     ax.aspect = DataAspect()
 
-    save(joinpath(out_dir, "undirected_skeleton_matrix.png"), fig)
-    save(joinpath(out_dir, "undirected_skeleton_matrix.pdf"), fig)
+    save(joinpath(out_dir, "directed_skeleton_matrix.png"), fig)
+    save(joinpath(out_dir, "directed_skeleton_matrix.pdf"), fig)
     set_theme!()
 
 end
