@@ -32,7 +32,7 @@ Turing.setprogress!(false)
 end
 
 @model function bayes_linear_var(x, y, i, ::Type{T} = Float64) where {T}
-    intercept ~ Normal(0.0, 10.0)
+    intercept ~ Normal(0.0, 1.0)
     log_variance_intercept ~ Normal(0.0, 1.0)
 
     n = size(x, 1)
