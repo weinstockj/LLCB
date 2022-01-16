@@ -122,7 +122,8 @@ function estimate_skeleton(data::DataFrame, load_from_cache = false, save_to_cac
     # cols = setdiff(ko_targets(), ko_controls())
     n_cols = length(cols)
     n_rows = nrow(data)
-    n_vals = Int64(n_cols * (n_cols - 1) / 2)
+    # n_vals = Int64(n_cols * (n_cols - 1) / 2)
+    n_vals = Int64(n_cols ^ 2 - n_cols)
 
     dir = output_dir()
 
@@ -152,11 +153,9 @@ function estimate_skeleton(data::DataFrame, load_from_cache = false, save_to_cac
         y = @view data[!, y_name]
         # @info "y_name is now $y_name, i = $i"
         # y = data[!, y_name]
-        for j in 1:i
+        for j in 1:n_cols
             x_name  = cols[j]
-            # @info "x_name is now $x_name, j = $j"
             if j == i 
-                # @info "$(now()) skipping x_name = $x_name y_name = $y_name"
                 continue
             end
             x_interact_i = Vector{Float64}(undef, n_rows)
@@ -177,7 +176,8 @@ function estimate_skeleton(data::DataFrame, load_from_cache = false, save_to_cac
                 end
             end
             model, sym2range = d_connected_advi(x, y, z, hcat(x_interact_i, x_interact_y))
-            index = j + sum(collect(1:(i-2)))
+            # index = j + sum(collect(1:(i-2)))
+            index = j + (i - 1) * (n_cols - 1) - Int(j > i) 
             values[index] = model 
             names[index] = [x_name, y_name]
             maps[index] = sym2range
