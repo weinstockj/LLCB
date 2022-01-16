@@ -204,26 +204,48 @@ function parse_symbol_map(posterior_vi::Bijectors.MultivariateTransformed, sym2r
     samples = rand(posterior_vi, n_sims) # sample from posterior
     mean_samples = mean(samples, dims = 2) # means of columns - posterior expectation estimates
 
+
     beta_x_index = sym2range.beta_x[1][1]  # e.g., first index is 26:26, second index is 26
-    lambda_x_index = sym2range.lambda_x[1][1]
+    # lambda_x_index = sym2range.lambda_x[1][1]
+    local_scale_a_x_index = sym2range.local_scale_a[1][1]
+    local_scale_b_x_index = sym2range.local_scale_b[1][1]
+    global_scale_a_index = sym2range.global_scale_a[1][1]
+    global_scale_b_index = sym2range.global_scale_b[1][1]
     beta_x_interact_i_index = sym2range.beta_i[1][1]
     beta_x_interact_y_index = sym2range.beta_i[1][2]
     log_variance_intercept_index = sym2range.log_variance_intercept[1][1]
     log_variance_beta_x_interact_i_index = sym2range.log_variance_beta_i[1][1]
     log_variance_beta_x_interact_y_index = sym2range.log_variance_beta_i[1][2]
     intercept_index = sym2range.intercept[1][1]
-    tau_index = sym2range.tau[1][1]
+    # tau_index = sym2range.tau[1][1]
 
-    κ = mean(1.0 ./ (1.0 .+ samples[lambda_x_index] .^ 2 .* samples[tau_index] .^ 2))
+    lambda_x_samples = samples[local_scale_a_x_index, :] .* sqrt.(samples[local_scale_b_x_index, :])
+    tau_samples = samples[global_scale_a_index, :] .* sqrt.(samples[global_scale_b_index, :])
+
+    @assert length(lambda_x_samples) == n_sims
+    @assert length(tau_samples) == n_sims
+
+    # κ = median(1.0 ./ (1.0 .+ lambda_x_samples .^ 2 .* samples[tau_index, :] .^ 2))
+    # κ_mean = mean(1.0 ./ (1.0 .+ lambda_x_samples .^ 2 .* samples[tau_index, :] .^ 2))
+    κ = median(1.0 ./ (1.0 .+ lambda_x_samples .^ 2 .* tau_samples .^ 2))
+    κ_mean = mean(1.0 ./ (1.0 .+ lambda_x_samples .^ 2 .* tau_samples .^ 2))
+
+    ϵ = 0.10
+    beta_pip_crude = mean(abs.(samples[beta_x_index, :]) .> ϵ)
 
     lambda_pip_threshold = 5.0
 
     return (
         beta_x                         = mean_samples[beta_x_index],
-        beta_pip_old                   = mean(samples[lambda_x_index, :] .> lambda_pip_threshold),
+        # beta_pip_old                   = mean(samples[lambda_x_index, :] .> lambda_pip_threshold),
+        beta_pip_old = missing,
         beta_pip                       = 1 - κ,
-        lambda_x                       = mean_samples[lambda_x_index],
-        tau                            = mean_samples[tau_index],
+        beta_pip_mean                  = 1 - κ_mean,
+        beta_pip_crude = beta_pip_crude,
+        # lambda_x                       = mean_samples[lambda_x_index],
+        lambda_x = mean(lambda_x_samples),
+        # tau                            = mean_samples[tau_index],
+        tau                            = mean(tau_samples),
         κ                              = κ,
         beta_x_interact_i              = mean_samples[beta_x_interact_i_index],
         beta_x_interact_y              = mean_samples[beta_x_interact_y_index],
@@ -249,9 +271,9 @@ function parse_skeleton(posterior::Vector{Bijectors.MultivariateTransformed}, na
     return result
 end
 
-function posterior_predictive(posterior::Bijectors.MultivariateTransformed, names::Vector{String}, sym2range::NamedTuple, data::DataFrame)
+function posterior_predictive(posterior::Bijectors.MultivariateTransformed, names::Vector{String}, sym2range::NamedTuple, data::DataFrame, cols = setdiff(ko_targets(), ko_controls()))
 
-    cols = setdiff(ko_targets(), ko_controls())
+    # cols = setdiff(ko_targets(), ko_controls())
     x_name = names[1]
     y_name = names[2]
     z_names = setdiff(cols, [x_name, y_name])
@@ -262,7 +284,6 @@ function posterior_predictive(posterior::Bijectors.MultivariateTransformed, name
     n_rows = nrow(data)
     samples = rand(posterior, n_sims) # sample from posterior
 
-    lambda_x_index = sym2range.lambda_x[1][1]
     beta_x_interact_i_index = sym2range.beta_i[1][1]
     beta_x_interact_y_index = sym2range.beta_i[1][2]
     log_variance_intercept_index = sym2range.log_variance_intercept[1][1]
@@ -272,7 +293,6 @@ function posterior_predictive(posterior::Bijectors.MultivariateTransformed, name
 
     beta_x_indices = sym2range.beta_x
     beta_x_indices = map(x -> x[1], beta_x_indices) # convert 27:27 to 27
-
 
     x_interact_i = Vector{Float64}(undef, n_rows)
     x_interact_y = Vector{Float64}(undef, n_rows)
