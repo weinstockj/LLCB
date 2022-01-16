@@ -33,7 +33,11 @@ function parse_sim_result(parsed_map, θ, x, y, Rsq)
         beta_x_interact_i = parsed_map.beta_x_interact_i,
         beta_x_interact_y = parsed_map.beta_x_interact_y,
         beta_pip = parsed_map.beta_pip,
+        beta_pip_mean = parsed_map.beta_pip_mean,
         beta_pip_old = parsed_map.beta_pip_old,
+        beta_pip_crude = parsed_map.beta_pip_crude,
+        lambda_x = parsed_map.lambda_x,
+        tau = parsed_map.tau,
         intercept = parsed_map.intercept,
         log_variance_intercept = parsed_map.log_variance_intercept,
         log_variance_beta_x_interact_i = parsed_map.log_variance_beta_x_interact_i,
@@ -235,7 +239,6 @@ function write_sims()
     # N_SIMS = 1000 # 4.62 seconds per simulation
     #
     date = "2022_01_07"
-
     
     @info "$(now()) running x->y, no z"
     df = parallel_sim_df(true, false)
