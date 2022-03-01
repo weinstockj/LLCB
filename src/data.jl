@@ -152,7 +152,6 @@ function read_filtered_rnaseq()
 
     @info "$(now()) Identified $(nrow(rnaseq)) readouts"
 
-    # targets = unique(filtered_pairs.ko_gene)  # excludes controls
     targets = ko_targets()
     sig_readouts = unique(filtered_pairs.readout_gene)
 
@@ -160,27 +159,25 @@ function read_filtered_rnaseq()
 
     subset!(rnaseq, :readout_gene => (x -> in.(x, Ref(sig_readouts))))
 
-    ko_collection = Dict{String, DataFrame}()
+    ko_collection = DataFrame()
 
     for ko in targets
         @info "$(now()) ko is $ko"
-        # sig_readouts = filtered_pairs[filtered_pairs.ko_gene .== ko, :]
-        data = subset_to_interventions(rnaseq, ko)
+        data = copy(subset_to_interventions(rnaseq, ko))
         data = remove_duplicated_readouts(data)
         if !(ko in ko_controls())
             data = zero_intervened_nodes(data, [ko])
         end
-        data = tranpose_df(normalize_rnaseq(data))
+        data = tranpose_df(data)
+        data[!, :intervention] .= ko
+        data[!, :donor] .= replace.(data[!, :donor], "_$(ko)" => "")
+        data[!, :donor] .= replace.(data[!, :donor], "Donor_" => "")
         for i in 1:nrow(data)
-            data[i, :donor] = ko
+            push!(ko_collection, data[i, :])
         end
-        rename!(data, :donor => :intervention)
-        # subset!(data, :readout_gene => (x -> in.(x, Ref(sig_readouts.readout_gene))))
-        # subset!(data, :readout_gene => (x -> in.(x, Ref(sig_readouts))))
-        push!(ko_collection, ko => data)
     end 
 
-    return ko_collection
+    return ko_collection[:, vcat(["donor", "intervention"], setdiff(targets, ko_controls()))]
 end
 
 function tranpose_df(data::DataFrame)
