@@ -229,34 +229,41 @@ function plot_scatter(parsed_skeleton::DataFrame, data::DataFrame, posterior_qua
     end
 end
 
-function plot_skeleton(s::posteriorSkeleton)
+function plot_posterior_mean(graph::MetaDiGraph)
     out_dir = figure_output_dir()
-    
-    nlabels = Vector{String}(undef, nv(s.g))
-    elabels = Vector{String}(undef, ne(s.g))
-    edge_color = Vector{Float64}(undef, ne(s.g))
-    for i in 1:nv(s.g)
-        nlabels[i] = s.g.vprops[i][:name]
-    end
-    min_weight = minimum(s.skeleton.beta_x)
-    max_weight = maximum(s.skeleton.beta_x)
 
-    for (i, val) in enumerate(values(s.g.eprops))
+    nlabels = Vector{String}(undef, nv(graph))
+    elabels = Vector{String}(undef, ne(graph))
+    edge_color = Vector{Float64}(undef, ne(graph))
+    for i in 1:nv(graph)
+        nlabels[i] = graph.vprops[i][:name]
+    end
+    #TODO: don't hard code these!
+    min_weight = -0.9
+    max_weight = 0.9 
+    # max_weight = maximum(graph.skeleton.beta_x)
+    # max_weight = maximum(graph.skeleton.beta_x)
+
+    for (i, val) in enumerate(values(graph.eprops))
         edge_color[i] = val[:weight]
         # elabels[i] = string(elabels_color[i])
     end
     # set_theme!(resolution = (900, 900))
-    fig = Figure(resolution=(1000,750))
-    fig[1,1] = title = Label(fig, "Skeleton", textsize=20)
+    fig = Figure(resolution=(1100,750))
+    # fig[1,1] = title = Label(fig, "Skeleton", textsize=20)
+    fig[1,1] = title = Label(fig, "", textsize=1)
     title.tellwidth = false
 
+    println("debug 2")
     fig[2,1] = ax = Axis(fig)
-    p = graphplot!(ax, s.g;
-        layout = SFDP(Ptype=Float32, tol=0.001, C=3.0, K=95.0, iterations = 900),
+    p = graphplot!(ax, graph;
+        layout = SFDP(Ptype=Float32, tol=0.001, C=3.0, K=70.0, iterations = 900),
         # layout = Spectral(dim = 2),
         # layout = Spring(Ptype = Float32),
         nlabels = nlabels, 
         # elabels = elabels
+        # arrows_show = true,
+        # arrows_shift = 0.9,
         edge_color = edge_color,
         edge_width = 5.0,
         edge_attr=(colormap=Reverse(:RdBu_5), colorrange = (min_weight, max_weight))
@@ -269,8 +276,8 @@ function plot_skeleton(s::posteriorSkeleton)
     #
     # println("p[:node_pos] = $(p[:node_pos])")
     #
-    node_x = Vector{Float32}(undef, nv(s.g))
-    node_y = Vector{Float32}(undef, nv(s.g))
+    node_x = Vector{Float32}(undef, nv(graph))
+    node_y = Vector{Float32}(undef, nv(graph))
     # println("p[:node_pos][] = $(p[:node_pos][])")
     # println("p[:node_pos][:, 1] = $(p[:node_pos][:, 1])")
 
@@ -281,22 +288,91 @@ function plot_skeleton(s::posteriorSkeleton)
         node_y[idx] = xy[2]
     end
 
-    # println("x = $node_x \n, y = $node_y")
-    println("debug me 2")
     buffer_x = 45
     buffer_y = 40
     xlims!(ax, minimum(node_x) - buffer_x, maximum(node_x) + buffer_x)
     ylims!(ax, minimum(node_y) - buffer_y, maximum(node_y) + buffer_y)
 
 
-    fig[2,2] = cb = Colorbar(fig, p.plots[1], label = "β1", vertical=true)
+    fig[2,2] = cb = Colorbar(fig, p.plots[1], label = "", vertical=true)
 
-    save(joinpath(out_dir, "undirected_skeleton_plot.png"), fig)
-    save(joinpath(out_dir, "undirected_skeleton_plot.pdf"), fig)
+    save(joinpath(out_dir, "directed_skeleton_plot.png"), fig)
+    save(joinpath(out_dir, "directed_skeleton_plot.pdf"), fig)
     set_theme!()
 end
 
-function plot_skeleton_as_matrix(s::posteriorSkeleton)
+function plot_posterior_mean(graph::interventionGraph)
+    out_dir = figure_output_dir()
+
+    nlabels = Vector{String}(undef, nv(graph.g))
+    elabels = Vector{String}(undef, ne(graph.g))
+    edge_color = Vector{Float64}(undef, ne(graph.g))
+    for i in 1:nv(graph.g)
+        nlabels[i] = graph.g.vprops[i][:name]
+    end
+    #TODO: don't hard code these!
+    min_weight = -0.9
+    max_weight = 0.9 
+    # max_weight = maximum(graph.skeleton.beta_x)
+    # max_weight = maximum(graph.skeleton.beta_x)
+
+    for (i, val) in enumerate(values(graph.g.eprops))
+        edge_color[i] = val[:weight]
+        # elabels[i] = string(elabels_color[i])
+    end
+    # set_theme!(resolution = (900, 900))
+    fig = Figure(resolution=(1100,750))
+    # fig[1,1] = title = Label(fig, "Skeleton", textsize=20)
+    fig[1,1] = title = Label(fig, "", textsize=1)
+    title.tellwidth = false
+
+    fig[2,1] = ax = Axis(fig)
+    p = graphplot!(ax, graph.g;
+        layout = SFDP(Ptype=Float32, tol=0.001, C=3.0, K=95.0, iterations = 900),
+        # layout = Spectral(dim = 2),
+        # layout = Spring(Ptype = Float32),
+        nlabels = nlabels, 
+        # elabels = elabels
+        arrows_show = true,
+        arrows_shift = 0.9,
+        edge_color = edge_color,
+        edge_width = 5.0,
+        edge_attr=(colormap=Reverse(:RdBu_5), colorrange = (min_weight, max_weight))
+    )
+    # offsets = 0.15 * (p[:node_pos][] .- p[:node_pos][][1])
+    # p.nlabels_offset[] = offsets
+    hidedecorations!(ax); hidespines!(ax)
+    ax.aspect = DataAspect()
+    # autolimits!(ax)
+    #
+    # println("p[:node_pos] = $(p[:node_pos])")
+    #
+    node_x = Vector{Float32}(undef, nv(graph.g))
+    node_y = Vector{Float32}(undef, nv(graph.g))
+    # println("p[:node_pos][] = $(p[:node_pos][])")
+    # println("p[:node_pos][:, 1] = $(p[:node_pos][:, 1])")
+
+    idx = 0
+    for xy in p[:node_pos][]
+        idx = idx + 1
+        node_x[idx] = xy[1]
+        node_y[idx] = xy[2]
+    end
+
+    buffer_x = 45
+    buffer_y = 40
+    xlims!(ax, minimum(node_x) - buffer_x, maximum(node_x) + buffer_x)
+    ylims!(ax, minimum(node_y) - buffer_y, maximum(node_y) + buffer_y)
+
+
+    fig[2,2] = cb = Colorbar(fig, p.plots[1], label = "", vertical=true)
+
+    save(joinpath(out_dir, "directed_skeleton_plot.png"), fig)
+    save(joinpath(out_dir, "directed_skeleton_plot.pdf"), fig)
+    set_theme!()
+end
+
+function plot_skeleton_as_matrix(s::DataFrame, suffix::String)
 
     out_dir = figure_output_dir()
 
@@ -312,7 +388,7 @@ function plot_skeleton_as_matrix(s::posteriorSkeleton)
 
     for i in 1:N_genes
         for j in 1:N_genes
-            val = s.skeleton[(s.skeleton.x .== X[j]) .& (s.skeleton.y .== Y[i]), "beta_x"]
+            val = s[(s.row .== X[j]) .& (s.col .== Y[i]), "estimate"]
             @assert length(val) <= 1
             if length(val) == 1
                 values[i, j] = val[1]
@@ -325,18 +401,27 @@ function plot_skeleton_as_matrix(s::posteriorSkeleton)
 
     fig[1,1] = ax = Axis(fig)
 
+    cmap = colormap("RdBu", 5; mid = 0)
+
+    println("values = $values")
+
+    println("debug me 3")
     max_value = maximum(abs.(values))
-    heatmap!(
+    CairoMakie.heatmap!(
         ax,
         1:N_genes,
         1:N_genes,
         Float32.(values),
-        colormap = Reverse(:RdBu_7),
+        # colormap = Reverse(:RdBu_9),
+        colormap = Reverse(cmap),
+        # colormap = colormap(:vik, 5; mid = 0),
         # colorange = (-1, 1)
         colorange = (-max_value, max_value)
     )
-    
-    fig[1,2] = cb = Colorbar(fig, colormap = Reverse(:RdBu_7), limits = (-max_value, max_value), label = "β1", vertical=true)
+
+    # fig[1,2] = cb = Colorbar(fig, colormap = Reverse(:RdBu_9), limits = (-max_value, max_value), label = "edge", vertical=true)
+    # fig[1,2] = cb = Colorbar(fig, colormap = Reverse(cmap), limits = (-max_value, max_value), label = "edge", vertical=true)
+    fig[1,2] = cb = Colorbar(fig, colormap = cmap, limits = (-max_value, max_value), label = "edge", vertical=true)
 
     ax.xticks = (1:N_genes, Y)
     ax.xticklabelrotation = 45.0
@@ -344,8 +429,8 @@ function plot_skeleton_as_matrix(s::posteriorSkeleton)
 
     ax.aspect = DataAspect()
 
-    save(joinpath(out_dir, "directed_skeleton_matrix.png"), fig)
-    save(joinpath(out_dir, "directed_skeleton_matrix.pdf"), fig)
+    save(joinpath(out_dir, "directed_skeleton_matrix_$(suffix).png"), fig)
+    save(joinpath(out_dir, "directed_skeleton_matrix_$(suffix).pdf"), fig)
     set_theme!()
 
 end
