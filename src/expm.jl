@@ -157,6 +157,32 @@ end
 # function exp!(x::Matrix{T}) where T<:Real
 #     x[:] = expm(x)
 # end
+#
+#
+function spectral_norm(W, max_iter = 30, ϵ = 1e-7) 
+    B = W .* W
+    x₀ = rand(size(B, 1))
+    y = x₀
+    λold = 0.0
+    λ = 1.0
+    for i in 1:max_iter
+        y = B * y
+        y = y / norm(y)
+        λ = dot(y, B * y) / dot(y, y)
+        if abs(λ - λold) < ϵ
+            break
+        end
+        λold = λ
+    end
+    # println("λ=$λ")
+    return λ
+end
+
+function spectral_karlov_norm(W)
+    x₀ = rand(size(W, 1))
+    vals, vecs, info = eigsolve(W, x₀, 1, :LM)
+    return real(vals[1])
+end
 
 function notears(W::Matrix{T}) where T
     # println("notears is being called")
