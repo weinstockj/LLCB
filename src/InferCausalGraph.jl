@@ -10,6 +10,7 @@ using Statistics
 using LinearAlgebra
 using Distributions
 # using Flux
+using AdvancedMH
 using Turing
 using Turing.Variational
 using Random
@@ -17,10 +18,11 @@ using Pathfinder
 using ForwardDiff
 # using Zygote
 # using ReverseDiff
-# using KrylovKit
+using KrylovKit
 # using Expokit
 # using ExponentialAction
 using Optim
+using Pathfinder.Optim.LineSearches
 using Serialization
 using ProgressMeter
 using CairoMakie
