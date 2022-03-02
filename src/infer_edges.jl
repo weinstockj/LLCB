@@ -5,8 +5,9 @@ function get_model_params(simulation::Bool, l1_penalty = 0.01, R_scale = 0.05)
     # TODO: maybe use dictionary here instead of named tuple
    vals = (;
         :β_scale => simulation ? 0.00070 : 0.00050,
-        :R_scale => simulation ? 0.1 : R_scale,
-        :l1_penalty => simulation ? 0.04 : l1_penalty,
+        :R_scale => simulation ? 0.005 : R_scale,
+        :l1_penalty => simulation ? 0.02 : l1_penalty, # smaller numbers mean more penalty
+        :l2_penalty => simulation ? 0.01 : 0.01, # smaller numbers mean more penalty
         :β_sum_scale => simulation ? 0.008 : 0.01,
         :θ_scale => simulation ? 0.01 : 0.10,
         :ω_scale => simulation ? 0.01 : 0.05,
@@ -85,18 +86,22 @@ end
 
 
     # R = det(W) # I - adjacency
-    R = notears(W)
+    # R = notears(W)
+    R = spectral_norm(W)
+    # R = spectral_karlov_norm(W)
     # R ~ Normal(0, 0.01)
-    # if rand(Bernoulli(.001), 1)[1]
-    #     println("W = $W")
-    #     println("R = $R")
+    # if rand(Bernoulli(.004), 1)[1]
+        # println("W = $W")
+        # println("R = $R")
     # end
     Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:R_scale]), R)
     # OP = opnorm(W, 1)
-    OP = norm(W, 1)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), OP)
-    β_sum = sum(β)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:β_sum_scale]), β_sum)
+    l1 = norm(W, 1)
+    l2 = norm(W, 2)
+    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), l1 * nv * (nv - 1) / 20)
+    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l2_penalty]), l2 * nv * (nv - 1) / 20) 
+    # β_sum = sum(β)
+    # Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:β_sum_scale]), β_sum)
     #
     # σ_θ ~ truncated(Normal(0, 1.0), 0, Inf)
     #
@@ -214,13 +219,16 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         ndraws_per_run = 80,
         importance = false,
         rng = rng,
-        optimizer = Optim.LBFGS(; m = 10), ndraws_elbo = 5, show_trace = false, iterations = 400
+        optimizer = Optim.LBFGS(; m = 5, linesearch = MoreThuente()),
+        ndraws_elbo = 8,
+        show_trace = false,
+        iterations = 400
     )
     path_init = obj.transform(ψs[:, 1])
-    threshold = 0.01
-    β_indices = 1:(g.nv * (g.nv))
-    β_small = findall(abs.(path_init) .< threshold)
-    path_init[intersect(β_indices, β_small)] .= 0.00 # change path init
+    # threshold = 0.01
+    # β_indices = 1:(g.nv * (g.nv))
+    # β_small = findall(abs.(path_init) .< threshold)
+    # path_init[intersect(β_indices, β_small)] .= 0.00 # change path init
     # takes 928 seconds wall time, 3580 seconds compute duration
     @info "$(now()) running MH now"
     model_chain = sample(
