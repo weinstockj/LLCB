@@ -44,19 +44,37 @@ function tmp_grn()
     return true_grn
 end
 
+function big_tmp_grn()
+    true_grn = zeros(10, 10)
+    true_grn[3, 1] = 0.19 #index 
+    true_grn[3, 2] = 0.13 #index 
+    true_grn[8, 3] = 0.17 #index 
+    true_grn[1, 4] = -0.33 #index 
+    true_grn[1, 7] = -0.28 #index 
+    true_grn[2, 5] = 0.22 #index 
+    # true_grn[2, 8] = -0.18 #index 
+    true_grn[2, 9] = 0.12 #index 
+    true_grn[8, 6] = 0.12 #index 
+    true_grn[9, 4] = 0.12 #index 
+    true_grn[10, 5] = 0.17 #index 
+    true_grn[10, 6] = -0.22 #index 
+    return true_grn
+end
+
 function sim_expression_and_fit_model()
     # true_grn = read_true_grn() .* .025
     #
-    true_grn = tmp_grn() * 40.0
-    expression = sim_expression(true_grn, 3, 50) 
+    # true_grn = tmp_grn() * 40.0
+    true_grn = big_tmp_grn()
+    expression = sim_expression(true_grn, 3, 250) 
     graph = interventionGraph(expression)
-    model_pars = get_model_params(true)
+    model_pars = get_model_params(false, .035, .01)
     sampling_pars = get_sampling_params(true)
     model = fit_model(graph, true, model_pars, sampling_pars)
     return model, graph
 end
 
-function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_replicates_per_donor::Int64 = 50)
+function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_replicates_per_donor::Int64 = 50, verbose=false)
     nv = size(true_adjacency, 1)
     θ = rand(Normal(0, .1), nv)
     ω = rand(Normal(0, .1), n_donors)
@@ -78,7 +96,10 @@ function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_
                 push!(nodes_without_parents, l)
             end
         end
-        println("nodes_without_parents = $nodes_without_parents")
+        if verbose
+            println("nodes_without_parents = $nodes_without_parents")
+        end
+
         @assert length(nodes_without_parents) >= 1
         for d in 1:n_donors
             for z in 1:n_replicates_per_donor
@@ -97,17 +118,23 @@ function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_
                     node = pop!(nodes_remaining)
                     children = findall(x -> x != 0, β[node, :])
                     for child in children
-                        push!(nodes_remaining, child)
+
                         parents = findall(x -> x != 0, β[:, child])
-                        if !all(xᵢ[setdiff(parents, k)] .> 0)
+
+                        if verbose
                             println("node = $node, child = $child, xᵢ = $xᵢ")
-                            println("xᵢ[parents]  = $(xᵢ[parents]), parents=$parents ")
+                            println("xᵢ[$(parents)]  = $(xᵢ[parents]), parents=$parents ")
+                            println(xᵢ[setdiff(parents, k)])
                         end
 
-                        @assert all(xᵢ[setdiff(parents, k)] .> 0)
-                        η = μ + θ[child] + ω[d] + sum(log1p.(xᵢ[parents]) .* β[parents, child])
-                        @assert xᵢ[child] == 0 
-                        xᵢ[child] = rand(LogNormal(η, σₓ), 1)[1]
+                        if all(xᵢ[setdiff(parents, k)] .> 0) & (xᵢ[child] == 0.0)
+                            # require all incoming edges to be set, and the child to not have been visited already
+                            push!(nodes_remaining, child)
+                            η = μ + θ[child] + ω[d] + sum(log1p.(xᵢ[parents]) .* β[parents, child])
+                            xᵢ[child] = rand(LogNormal(η, σₓ), 1)[1]
+                        else 
+                            continue
+                        end
                     end
                 end
 
