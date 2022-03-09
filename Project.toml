@@ -4,6 +4,7 @@ authors = ["Josh Weinstock <jweinstk@umich.edu>"]
 version = "0.1.0"
 
 [deps]
+AdvancedMH = "5b7e9947-ddc0-4b3f-9b55-0d8042f74170"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 Cairo = "159f3aea-2a34-519c-b102-8c37f9878175"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
@@ -12,6 +13,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Debugger = "31a5f54b-26ea-5ae9-a837-f05ce5417438"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+DynamicPPL = "366bfd00-2699-11ea-058f-f148b4cae6d8"
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 Fontconfig = "186bb1d3-e1f7-5a2c-a377-96d770f13627"
 Formatting = "59287772-0a20-5a39-b81b-1366585eb4c0"
