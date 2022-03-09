@@ -87,8 +87,7 @@ end
 
     # R = det(W) # I - adjacency
     # R = notears(W)
-    R = spectral_norm(W)
-    # R = spectral_karlov_norm(W)
+    R = spectral_radius(W)
     # R ~ Normal(0, 0.01)
     # if rand(Bernoulli(.004), 1)[1]
         # println("W = $W")
@@ -156,7 +155,7 @@ function one_hot(d::Vector{Int8})
     return transpose(unique(d) .== permutedims(d))
 end
 
-function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedTuple, sampling_pars::NamedTuple)
+function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedTuple, sampling_pars::NamedTuple, discrete = true)
     # Turing.setadbackend(:reversediff)
     # Turing.setadbackend(:zygote)
     Turing.setadbackend(:forwarddiff)
@@ -211,44 +210,170 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
     # @. init = rand(rng) * 1.0 - 0.5
     @info "$(now()) running pathfinder"
     noise_dist = Normal(0, .001)
-    n_runs = 5
-    total_draws = 400
+    # n_runs = 5
+    # total_draws = 400
+    n_runs = 2
+    total_draws = 40
     q, ψs, logψs = multipathfinder(
         logp, gradlogp, 
         [init .+ rand(noise_dist, 1) for i in 1:n_runs], total_draws;
-        ndraws_per_run = 80,
+        ndraws_per_run = 20,
         importance = false,
         rng = rng,
         optimizer = Optim.LBFGS(; m = 5, linesearch = MoreThuente()),
-        ndraws_elbo = 8,
+        ndraws_elbo = 10,
         show_trace = false,
-        iterations = 400
+        iterations = 600
+        # iterations = 300
     )
     path_init = obj.transform(ψs[:, 1])
-    # threshold = 0.01
-    # β_indices = 1:(g.nv * (g.nv))
+    # threshold = 0.08
+    β_indices = 1:(g.nv * (g.nv - 1))
     # β_small = findall(abs.(path_init) .< threshold)
     # path_init[intersect(β_indices, β_small)] .= 0.00 # change path init
+    θ_indices = (maximum(β_indices) + 1):(maximum(β_indices) + g.nv)
+    ω_indices = (maximum(θ_indices) + 1):(maximum(θ_indices) + length(unique(g.donor)))
+    σₓ_index = length(path_init)
+
     # takes 928 seconds wall time, 3580 seconds compute duration
-    @info "$(now()) running MH now"
-    model_chain = sample(
-        model, 
+    @info "$(now()) running MCMC now"
+    sampler = (
+        discrete ? 
+        discrete_sampler(
+                    g.nv,
+                    length(unique(g.donor)),
+                    convert_to_reduced_adjacency(
+                        daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv)))
+                    ),
+                    path_init[θ_indices],
+                    path_init[ω_indices],
+                    path_init[σₓ_index]
+                )
+        # sampler = MH()
+        :
         NUTS(
             sampling_pars[:warmups], sampling_pars[:acceptance];
             max_depth = sampling_pars[:max_depth], init_ϵ = sampling_pars[:init_ϵ]
-        ), 
-        MCMCThreads(), 
-        sampling_pars[:samples], 
-        Threads.nthreads();
-        init_params = path_init
+        ) 
     )
-    # model_chain = sample(model, MH(), MCMCThreads(), 100, Threads.nthreads(); init_params = path_init)
-    # model_chain = sample(model, MH(), MCMCThreads(), 10, 6)
+
+    path_init = vcat(
+        vec(
+            convert_to_reduced_adjacency(
+                daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv)))
+            )
+        ),
+        path_init[θ_indices],
+        path_init[ω_indices],
+        path_init[σₓ_index]
+    )
+
+    model_chain = (
+        discrete ? 
+        sample(
+            model, 
+            sampler,
+            MCMCThreads(), 
+            1000,
+            # 10,
+            Threads.nthreads();
+            init_params = path_init, # doesn't work with MH sampler to specify initial state
+            # discard_initial=2000,
+            thinning = 5
+        )
+        :
+        sample(
+            model, 
+            sampler,
+            MCMCThreads(), 
+            sampling_pars[:samples], 
+            Threads.nthreads();
+            init_params = path_init
+        )
+    )
+
     # 253 seconds with forwarddiff
-    quantities = generated_quantities(model, model_chain)
-    return model_chain, quantities, path_init, ψs
-    # return path_init, ψs, map_estimate
-    # return map_estimate
+    chains_params = Turing.MCMCChains.get_sections(model_chain, :parameters)
+    quantities = generated_quantities(model, chains_params)
+    return model_chain, quantities, path_init
+    # return model, sampler, model_chain, quantities, path_init, ψs
+    # return model, sampler, path_init
+end
+
+function convert_to_reduced_adjacency(W::Matrix{T}) where T <: Real
+    nv = size(W, 2)
+    β = Array{T}(undef, nv - 1, nv) 
+
+    for i in 1:nv
+        for j in 1:nv
+            if i == j
+                continue
+            else
+                β[i - Int(i > j), j] = W[i, j]
+            end
+        end
+    end
+
+    return β
+end
+
+function convert_to_full_adjacency(β::Matrix{T}) where T <: Real
+    nv = size(β, 2)
+    W = Array{T}(undef, nv, nv) # I - the entire adjacency matrix
+
+    for i in 1:nv
+        for j in 1:nv
+            if i == j
+                W[i, j] = 0
+            else
+                @assert i - Int(i > j) <= (nv - 1)
+                W[i, j] = β[i - Int(i > j), j]
+            end
+        end
+    end
+
+    return W
+end
+
+function daggify(W::Matrix{T}) where T<:AbstractFloat
+    dag = true 
+    β = deepcopy(W)
+    println("initial matrix = $W")
+    # threshold = minimum(β[abs.(β) .> 0]) # initialize threshold at min non-zero element
+    sorted_vals = sort(abs.(vec(β[abs.(β) .> 0])))
+    count = 1
+    threshold = sorted_vals[count]
+    sr = last(eigvals(β .* β))
+    # sr = opnorm(β .* β, 2)
+    if (typeof(sr) <: Complex) || (sr > .005)
+        dag = false
+    end
+
+    while !dag 
+        count += 1
+        β[abs.(β) .<= threshold] .= 0.0
+        sr = last(eigvals(β .* β))
+        # sr = opnorm(β .* β, 2)
+        if (typeof(sr) <: Real) && (sr < .005)
+            dag = true
+        else 
+            threshold = sorted_vals[count]
+        end
+        # println("threshold = $threshold, β = $β, sr = $sr")
+    end
+    
+    println("Converted to DAG after $count iterations")
+    return β
+end
+
+function discrete_sampler(nv, n_donors, β_init, θ_init, ω_init, σₓ_init)
+    return MH(
+        :β => DAG(deepcopy(β_init), 0.0, 0.05),
+        :θ => MvNormal(θ_init, I * 0.05),
+        :ω => MvNormal(ω_init, I * 0.05),
+        :σₓ => Truncated(Normal(σₓ_init, 0.10), 0, Inf)
+    )
+
 end
 
 # parse_chain(m[1], m[2], targets)
