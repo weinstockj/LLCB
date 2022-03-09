@@ -159,9 +159,9 @@ end
 # end
 #
 #
-function spectral_norm(W, max_iter = 30, ϵ = 1e-7) 
+function spectral_radius(W, max_iter = 30, ϵ = 1e-7) 
     B = W .* W
-    x₀ = rand(size(B, 1))
+    x₀ = Base.rand(size(B, 1))
     y = x₀
     λold = 0.0
     λ = 1.0
@@ -176,12 +176,6 @@ function spectral_norm(W, max_iter = 30, ϵ = 1e-7)
     end
     # println("λ=$λ")
     return λ
-end
-
-function spectral_karlov_norm(W)
-    x₀ = rand(size(W, 1))
-    vals, vecs, info = eigsolve(W, x₀, 1, :LM)
-    return real(vals[1])
 end
 
 function notears(W::Matrix{T}) where T
