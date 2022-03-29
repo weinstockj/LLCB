@@ -4,7 +4,7 @@ using LinearAlgebra: I
 using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params
 using Statistics: var, std, cor, cov
 using Formatting: sprintf1
-using DataFrames: DataFrame, rename!
+using DataFrames: DataFrame, rename!, vcat
 using CSV: write, read
 using Dates: now
 using Turing: setprogress!
@@ -44,6 +44,16 @@ function tmp_grn()
     return true_grn
 end
 
+function tmp_grn_alt()
+    true_grn = zeros(5, 5)
+    true_grn[3, 1] = 0.009 #index β[2,1]
+    true_grn[3, 2] = 0.007 #index β[2,2]
+    # true_grn[3, 5] = 0.07 #index β[3,5]
+    true_grn[1, 4] = -0.006 #index β[1,4]
+    true_grn[5, 2] = -0.008 #index β[2,5]
+    return true_grn
+end
+
 function big_tmp_grn()
     true_grn = zeros(10, 10)
     true_grn[3, 1] = 0.19 #index 
@@ -64,9 +74,27 @@ end
 function sim_expression_and_fit_model()
     # true_grn = read_true_grn() .* .025
     #
-    # true_grn = tmp_grn() * 40.0
-    true_grn = big_tmp_grn()
-    expression = sim_expression(true_grn, 3, 250) 
+    true_grn = tmp_grn() * 40.0
+    # true_grn = big_tmp_grn()
+    # expression = sim_expression(true_grn, 3, 250) 
+    expression = sim_expression(true_grn, 3, 50) 
+    graph = interventionGraph(expression)
+    model_pars = get_model_params(false, .035, .01)
+    sampling_pars = get_sampling_params(true)
+    model = fit_model(graph, true, model_pars, sampling_pars)
+    return model, graph
+end
+
+function sim_multi_modal_expression_and_fit_model()
+    # true_grn = read_true_grn() .* .025
+    #
+    true_grn_a = tmp_grn() * 40.0
+    true_grn_b = tmp_grn_alt() * 40.0
+    # true_grn = big_tmp_grn()
+    # expression = sim_expression(true_grn, 3, 250) 
+    expression_a = sim_expression(true_grn_a, 3, 50) 
+    expression_b = sim_expression(true_grn_b, 3, 50) 
+    expression = vcat(expression_a, expression_b)
     graph = interventionGraph(expression)
     model_pars = get_model_params(false, .035, .01)
     sampling_pars = get_sampling_params(true)
