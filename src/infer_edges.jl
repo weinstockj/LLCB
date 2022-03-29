@@ -30,6 +30,37 @@ function get_sampling_params(simulation::Bool)
    return vals
 end
 
+@model function joint_model_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
+    β ~ filldist(Laplace(0, pars[:β_scale]), nv, nv) # this skips the diagonal elements
+    l1 = norm(β, 1)
+    l2 = norm(β, 2)
+    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), l1 * nv * (nv - 1) / 20)
+    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l2_penalty]), l2 * nv * (nv - 1) / 20) 
+
+    θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
+    ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
+    # σₓ ~ truncated(Cauchy(0, pars[:σₓ_scale]), 0, Inf)
+    σₓ ~ Normal(-2.0, 1.0)
+
+    λₓ = Array{T}(undef, n, nv)
+    for i in 1:n
+        for j in 1:nv
+            vec = 1:nv .!= j
+            indices = (1:nv)[vec]
+            ν = sum(β[indices, j] .* x[i, indices])
+
+            λₓ[i, j] = μ + θ[j] + ω[donors[i]] + ν
+            if interventions[i, j] != 1 # only count instances when target gene is not perturbed
+                x[i, j] ~ Normal(λₓ[i, j], exp(σₓ) + .0001)
+            end
+        end
+    end
+
+    return β
+end
+   
+
+
 @model function joint_model(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
    
     # β ~ filldist(Laplace(0, 0.1), nv - 1, nv)
@@ -113,9 +144,11 @@ end
     ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
     # ω ~ MvNormal(zeros(n_donors), I * .001)
 
-    σₓ ~ truncated(Cauchy(0, pars[:σₓ_scale]), 0, Inf)
+    # σₓ ~ truncated(Cauchy(0, pars[:σₓ_scale]), 0, Inf)
+    σₓ ~ Normal(-2, 1.0) # log scale
 
     λₓ = Array{T}(undef, n, nv)
+    λₓ
     for i in 1:n
         for j in 1:nv
             vec = 1:nv .!= j
@@ -135,7 +168,7 @@ end
             # Turing.@addlogprob! loglikelihood(Normal(μ + θ[j] + ω[donors[i]] + sum(β[indices, j] .* x[i, indices]), σₓ + .0001), x[i, j]) * (1.0 - interventions[i, j])
             if interventions[i, j] != 1 # only count instances when target gene is not perturbed
                 # x[i, j] ~ LogNormal(λₓ[i, j], σₓ + .0001)
-                x[i, j] ~ Normal(λₓ[i, j], σₓ + .0001)
+                x[i, j] ~ Normal(λₓ[i, j], exp(σₓ) + .0001)
                 # x[i, j] ~ Normal(μ + θ'gene_vec + ω'donors[i, :] + sum(β[indices, j] .* x[i, indices]), σₓ + .0001)
                 # x[i, j] ~ Normal(μ + θ'gene_vec + ω'donors[i, :] + sum(β[:, j] .* (x[i, :]'vec)), σₓ + .0001)
 
@@ -156,14 +189,13 @@ function one_hot(d::Vector{Int8})
 end
 
 function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedTuple, sampling_pars::NamedTuple, discrete = true)
-    # Turing.setadbackend(:reversediff)
-    # Turing.setadbackend(:zygote)
     Turing.setadbackend(:forwarddiff)
 
     if log_normalize
         μ = mean(normalize(g.x) .* (1.0 .- g.interventions))
         # model = joint_model(normalize(g.x), size(g.x, 1), g.nv, one_hot(g.donor), length(unique(g.donor)), g.interventions, μ, 0.0)
         model = joint_model(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
+        model_mcmc = joint_model_mcmc(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
     else
         μ = mean(g.x .* (1.0 .- g.interventions))
         model = joint_model(g.x, size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
@@ -242,9 +274,7 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         discrete_sampler(
                     g.nv,
                     length(unique(g.donor)),
-                    convert_to_reduced_adjacency(
-                        daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv)))
-                    ),
+                    daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv))),
                     path_init[θ_indices],
                     path_init[ω_indices],
                     path_init[σₓ_index]
@@ -259,9 +289,7 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
 
     path_init = vcat(
         vec(
-            convert_to_reduced_adjacency(
-                daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv)))
-            )
+            daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv)))
         ),
         path_init[θ_indices],
         path_init[ω_indices],
@@ -271,19 +299,20 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
     model_chain = (
         discrete ? 
         sample(
-            model, 
+            model_mcmc, 
             sampler,
             MCMCThreads(), 
-            1000,
-            # 10,
+            # MCMCSerial(), 
+            4000,
+            # 1;
             Threads.nthreads();
             init_params = path_init, # doesn't work with MH sampler to specify initial state
             # discard_initial=2000,
-            thinning = 5
+            thinning = 10
         )
         :
         sample(
-            model, 
+            model_mcmc, 
             sampler,
             MCMCThreads(), 
             sampling_pars[:samples], 
@@ -294,8 +323,10 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
 
     # 253 seconds with forwarddiff
     chains_params = Turing.MCMCChains.get_sections(model_chain, :parameters)
-    quantities = generated_quantities(model, chains_params)
-    return model_chain, quantities, path_init
+    quantities = generated_quantities(model_mcmc, chains_params)
+    acceptance_rate = sampler.proposals[:β].accepted / sampler.proposals[:β].total
+    println("acceptance_rate = $acceptance_rate")
+    return model_chain, quantities, path_init, sampler
     # return model, sampler, model_chain, quantities, path_init, ψs
     # return model, sampler, path_init
 end
@@ -338,7 +369,7 @@ end
 function daggify(W::Matrix{T}) where T<:AbstractFloat
     dag = true 
     β = deepcopy(W)
-    println("initial matrix = $W")
+    # println("initial matrix = $W")
     # threshold = minimum(β[abs.(β) .> 0]) # initialize threshold at min non-zero element
     sorted_vals = sort(abs.(vec(β[abs.(β) .> 0])))
     count = 1
@@ -368,10 +399,15 @@ end
 
 function discrete_sampler(nv, n_donors, β_init, θ_init, ω_init, σₓ_init)
     return MH(
-        :β => DAG(deepcopy(β_init), 0.0, 0.05),
-        :θ => MvNormal(θ_init, I * 0.05),
-        :ω => MvNormal(ω_init, I * 0.05),
-        :σₓ => Truncated(Normal(σₓ_init, 0.10), 0, Inf)
+        # :β => StaticProposal(DAG(deepcopy(β_init), 0.0, 0.10)),
+        :β => DAGProposal(DAG(deepcopy(β_init), 0.0, 0.05)),
+        # :β => RandomWalkProposal(DAG(deepcopy(β_init), 0.0, 0.10)),
+        # :θ => StaticProposal(MvNormal(θ_init, I * 0.03)),
+        # :ω => StaticProposal(MvNormal(ω_init, I * 0.03)),
+        :θ => RandomWalkProposal(MvNormal(zeros(length(θ_init)), I * 0.03)),
+        :ω => RandomWalkProposal(MvNormal(zeros(length(ω_init)), I * 0.03)),
+        # :σₓ => StaticProposal(Truncated(Normal(σₓ_init, 0.15), 0, Inf))
+        :σₓ => RandomWalkProposal(Normal(0., 0.10))
     )
 
 end

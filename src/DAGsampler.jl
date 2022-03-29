@@ -37,8 +37,14 @@ function DAG(W::Matrix, μ::Float64, σ::Float64)
     return DAG(A, Normal(μ, σ))
 end
 
-Base.size(s::DAGSampler) = size(convert_to_reduced_adjacency(s.W))
-Base.size(d::DAG) = size(convert_to_reduced_adjacency(d.W))
+# Base.size(s::DAGSampler) = size(convert_to_reduced_adjacency(s.W))
+# Base.size(d::DAG) = size(convert_to_reduced_adjacency(d.W))
+Base.size(s::DAGSampler) = size(s.W)
+Base.size(d::DAG) = size(d.W)
+
+function reverse(x::CartesianIndex)
+    return CartesianIndex(last(Tuple(x)), first(Tuple(x)))
+end
 
 function _rand!(rng::AbstractRNG, s::DAGSampler, x::Matrix{T}) where T<:AbstractFloat
 
@@ -50,58 +56,57 @@ function _rand!(rng::AbstractRNG, s::DAGSampler, x::Matrix{T}) where T<:Abstract
 
     dist = s.dist
 
-    max = 20
+    max = 30
     count = 0
+    
+    non_zero_edges = findall(abs.(x) .> 0.0)
+    reversed_edges = reverse.(non_zero_edges)
+    zero_edges = findall(x .== 0.0)
+    legal_new_edges = setdiff(zero_edges, reversed_edges)
+    choices = ("delete", "reverse", "add", "modify")
+    choice_dist = Categorical([.25, .25, .25, .25])
+    local edge
+    local reverse_edge
 
     while count < max
         count += 1
-        i = Base.rand(1:d)
-        j = Base.rand(setdiff(1:d, i)) # no diagonals
-        tmp = rand(dist)
-        x[i, j] += tmp
+        proposal_choice = choices[rand(choice_dist)]
+        # println("choice = $proposal_choice")
+        if proposal_choice == "delete"
+            edge = sample(non_zero_edges)
+            x[edge] = 0
+            # i = Base.rand(1:d)
+            # j = Base.rand(setdiff(1:d, i)) # no diagonals
+
+        elseif proposal_choice == "reverse"
+            edge = sample(non_zero_edges)
+            # reverse_edge = CartesianIndex(last(Tuple(edge)), first(Tuple(edge)))
+            reverse_edge = reverse(edge)
+            x[reverse_edge] = x[edge] 
+            x[edge] = 0.0
+        elseif proposal_choice == "modify"
+            edge = sample(non_zero_edges)
+            x[edge] += rand(dist)
+        else # add new edge
+            edge = sample(legal_new_edges)
+            x[edge] = rand(dist)
+        end
         sr = last(eigvals(x .* x))
         # println("sr = $sr")
         if (typeof(sr) <: Real) && (sr < 0.005)
-            # println("x = $x, count = $count")
+            # x .= x .- s.W # for random walk proposal
+            # println("found a DAG; proposal = $proposal_choice, x = $x, count = $count, sr = $sr")
             return
         else
-            x[i, j] = s.W[i, j] # refer to original entry
+            # println("not a DAG; proposal = $proposal_choice,  x = $x, count = $count, sr = $sr")
+            x[edge] = s.W[edge] # refer to original entry
+            if @isdefined reverse_edge
+                x[reverse_edge] = s.W[reverse_edge] # refer to original entry
+            end
         end
     end
 
     error("can't sample new DAG after $max attempts")
-
-end
-
-function _rand!(rng::AbstractRNG, d::DAG, x::Matrix{T}) where T<:AbstractFloat
-    g = size(d.W, 2) # genes 
-    @assert g == size(d.W, 1)
-
-    dist = s.dist
-
-    max = 20
-    count = 0
-
-    while count < max
-        count += 1
-        i = Base.rand(1:g)
-        j = Base.rand(setdiff(1:g, i)) # no diagonals
-        tmp = rand(dist)
-        x[i, j] += tmp
-        sr = real(eigvals(x .* x)[g])
-        # println("x = $x")
-        # println("sr = $sr")
-        if (typeof(sr) <: Real) && (sr < 0.005)
-            return
-        else
-            x[i, j] = s.W[i, j] # refer to original entry
-        end
-    end
-
-    @assert !isequal(x, d.W) # don't return original DAG...
-
-    error("can't sample new DAG after $max attempts")
-
 
 end
 
@@ -112,7 +117,8 @@ function Base.rand(rng::AbstractRNG, s::DAGSampler)
     _rand!(rng, s, x)
 
     # println("x=$x")
-    return convert_to_reduced_adjacency(x)
+    # return convert_to_reduced_adjacency(x)
+    return x
 end
 
 function Base.rand(d::DAG)
@@ -126,10 +132,10 @@ end
 
 function Distributions._logpdf(d::DAG, X::AbstractMatrix{T}) where T<:AbstractFloat
     # println("debug me 3")
-    return 0.0
+    # use the below for a static proposal
+    γ = 0.2
+    val = exp(-γ * norm(X, 1))
+    return val
+    # return 0.0
 end
 
-function Distributions.logkernel(d::DAG, X::AbstractMatrix{T}) where T<:AbstractFloat
-    println("debug me 4")
-    return 0.0
-end
