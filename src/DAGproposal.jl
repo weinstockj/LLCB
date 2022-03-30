@@ -24,12 +24,61 @@ function AdvancedMH.propose(
     t
 )
     proposal.total += 1
-    # println("debug me 1")
-    d = DAG(deepcopy(t), 0.0, 0.05)
-    # println("current t = $t")
-    p = rand(rng, d)
-    # println("current p = $p")
-    return p
+    p = size(t, 1) # genes 
+
+    max = 30
+    count = 0
+
+    orig = deepcopy(t)
+    x = deepcopy(t)
+
+    println("current transition is $t")
+    
+    non_zero_edges = findall(abs.(x) .> 0.0)
+    reversed_edges = reverse.(non_zero_edges)
+    zero_edges = findall(x .== 0.0)
+    legal_new_edges = setdiff(zero_edges, reversed_edges)
+    choices = ("delete", "reverse", "add")
+    choice_dist = Categorical([1/3, 1/3, 1/3])
+    local edge
+    local reverse_edge
+    sr = 0.0
+
+    while count < max
+        count += 1
+        proposal_choice = choices[rand(choice_dist)]
+        # println("choice = $proposal_choice")
+        if proposal_choice == "delete"
+            edge = sample(non_zero_edges)
+            x[edge] = 0
+            # i = Base.rand(1:d)
+            # j = Base.rand(setdiff(1:d, i)) # no diagonals
+        elseif proposal_choice == "reverse"
+            edge = sample(non_zero_edges)
+            # reverse_edge = CartesianIndex(last(Tuple(edge)), first(Tuple(edge)))
+            reverse_edge = reverse(edge)
+            x[reverse_edge] = x[edge] 
+            x[edge] = 0.0
+        else # add new edge
+            edge = sample(legal_new_edges)
+            x[edge] = 1.0
+        end
+        
+        sr = last(eigvals(x .* x))
+        # println("sr = $sr")
+        if (typeof(sr) <: Real) && (sr < 0.005)
+            println("found a DAG; proposal = $proposal_choice, x = $x, count = $count, sr = $sr")
+            return x
+        else
+            # println("not a DAG; proposal = $proposal_choice,  x = $x, count = $count, sr = $sr")
+            x[edge] = orig[edge] # refer to original entry
+            if @isdefined reverse_edge
+                x[reverse_edge] = orig[reverse_edge] # refer to original entry
+            end
+        end
+    end
+
+    error("can't sample new DAG after $max attempts, sr = $sr")
 end
 
 function AdvancedMH.q(proposal::DAGProposal, t, t_cond) 

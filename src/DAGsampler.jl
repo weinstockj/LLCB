@@ -1,107 +1,141 @@
-struct DAGSampler <: Sampleable{Matrixvariate, Continuous}
-    W::Matrix{AbstractFloat} # initial DAG
-    dist::ContinuousDistribution # distribution of noise
-end
+# struct DAGSampler <: Sampleable{Matrixvariate, Continuous}
+#     nv::Integer
+# end
 
 struct DAG <: ContinuousMatrixDistribution
-    W::Matrix{AbstractFloat} # initial DAG
-    dist::ContinuousDistribution # distribution of noise
+    nv::Integer
+    logc0::AbstractFloat
 end
 
-function DAGSampler(W::Matrix, μ::Float64, σ::Float64)
-    A = (size(W, 1) != size(W, 2) ? deepcopy(convert_to_full_adjacency(W)) : deepcopy(W))
+function DAG(nv::Integer)
+    return DAG(nv, 0.0)
+end
 
-    size(A, 1) == size(A, 2) || error("matrix A is not square")
+struct DAGScorer
+    G::BitMatrix # unweighted adjacency matrix
+    ESS::Integer
+    T::Matrix{AbstractFloat} # prior for Wishart
+    aᵤ::AbstractFloat
+    nv::Integer # nodes in graph
+end
 
-    sr = real(eigvals(A .* A)[size(A, 1)])
-    if sr > .005
-        error("W must be a DAG; instead, input DAG has spectral radius of $sr")
+function DAGScorer(G::BitMatrix)
+
+    nv = size(G, 1)
+    ESS = nv + 20
+    aᵤ = 1.0
+    T = aᵤ * (ESS - nv - 1) / (aᵤ + 1) * Matrix(I, nv, nv)
+    @assert size(T, 1) == size(T, 2)
+
+    return DAGScorer(
+        G,
+        ESS,
+        T,
+        aᵤ,
+        nv
+    )
+end
+
+
+function ll(d::DAGScorer, X::AbstractMatrix{T}) where T<:AbstractFloat
+
+    N = size(X, 1) 
+    μhat = Statistics.mean(X; dims = 1)
+    Σhat = cov(X)
+    # println("μhat = $μhat")
+    # println("N = $N")
+
+    @assert length(μhat) == d.nv
+    @assert size(Σhat)[1] == d.nv
+    @assert size(Σhat)[2] == d.nv
+
+    R = d.T .+ Σhat .+ (N * d.ESS / (N + d.ESS)) .* sum(μhat .* μhat)
+
+    # println("Σhat = $Σhat")
+    # println("R = $R")
+
+    @assert size(R, 1) == size(R, 2)
+    @assert size(R, 1) == d.nv
+
+    loglik = 0.0
+
+    for i in 1:d.nv
+        node_loglik = 0.0
+        parents = findall(d.G[:, i] .!= 0)
+        family = union([i], parents) # child node and parents
+
+        println("parents for node $i are $parents")
+
+        n_parents = length(parents)
+        
+        node_loglik = (-N / 2.0) * log(π) + 0.5 * log(d.aᵤ / (N + d.aᵤ))
+
+        for j in 0:Int(floor(N / 2.0))
+            node_loglik += log(0.5 * (2 * i + d.ESS - d.nv + n_parents + 1))
+        end
+        node_loglik += (0.5 * (d.ESS - d.nv + 2 * n_parents + 1)) * log(d.aᵤ * (d.ESS - d.nv - 1) / (d.aᵤ + 1.0))
+        node_loglik -= (0.5 * (N + d.ESS - d.nv + n_parents + 1)) * log(det(R[family, family]))
+
+        if n_parents > 0
+            node_loglik += (0.5 * (N + d.ESS - d.nv + n_parents)) * log(det(R[parents, parents])) 
+        end
+        loglik += node_loglik
     end
-    return DAGSampler(A, Normal(μ, σ))
+
+    return loglik
 end
 
-function sampler(d::DAG)
-    sampler = DAGSampler(d.W, d.dist)
-    return sampler
-end
-
-function DAG(W::Matrix, μ::Float64, σ::Float64)
-    A = (size(W, 1) != size(W, 2) ? deepcopy(convert_to_full_adjacency(W)) : deepcopy(W))
-
-    size(A, 1) == size(A, 2) || error("matrix A is not square")
-
-    sr = last(eigvals(A .* A))
-    if sr > .005
-        error("W must be a DAG; instead, input DAG has spectral radius of $sr")
-    end
-    return DAG(A, Normal(μ, σ))
-end
-
-# Base.size(s::DAGSampler) = size(convert_to_reduced_adjacency(s.W))
-# Base.size(d::DAG) = size(convert_to_reduced_adjacency(d.W))
-Base.size(s::DAGSampler) = size(s.W)
-Base.size(d::DAG) = size(d.W)
+Base.size(d::DAG) = (d.nv, d.nv)
 
 function reverse(x::CartesianIndex)
     return CartesianIndex(last(Tuple(x)), first(Tuple(x)))
 end
 
-function _rand!(rng::AbstractRNG, s::DAGSampler, x::Matrix{T}) where T<:AbstractFloat
+function _rand!(rng::AbstractRNG, d::DAG, x::BitMatrix) 
 
-    # println("debug me 2")
-    # println("size(s.W) = $(size(s.W))")
-    # println("size(x) = $(size(x))")
-    d = size(s.W, 2) # genes 
-    @assert d == size(s.W, 1)
-
-    dist = s.dist
+    println("debug me here!")
+    p = d.nv # genes 
 
     max = 30
     count = 0
+
+    orig = deepcopy(x)
     
     non_zero_edges = findall(abs.(x) .> 0.0)
     reversed_edges = reverse.(non_zero_edges)
     zero_edges = findall(x .== 0.0)
     legal_new_edges = setdiff(zero_edges, reversed_edges)
-    choices = ("delete", "reverse", "add", "modify")
-    choice_dist = Categorical([.25, .25, .25, .25])
+    choices = ("delete", "reverse", "add")
+    choice_dist = Categorical([0, 0, 1.0])
     local edge
     local reverse_edge
 
     while count < max
         count += 1
         proposal_choice = choices[rand(choice_dist)]
-        # println("choice = $proposal_choice")
         if proposal_choice == "delete"
             edge = sample(non_zero_edges)
             x[edge] = 0
-            # i = Base.rand(1:d)
-            # j = Base.rand(setdiff(1:d, i)) # no diagonals
-
         elseif proposal_choice == "reverse"
             edge = sample(non_zero_edges)
-            # reverse_edge = CartesianIndex(last(Tuple(edge)), first(Tuple(edge)))
             reverse_edge = reverse(edge)
             x[reverse_edge] = x[edge] 
             x[edge] = 0.0
-        elseif proposal_choice == "modify"
-            edge = sample(non_zero_edges)
-            x[edge] += rand(dist)
         else # add new edge
             edge = sample(legal_new_edges)
-            x[edge] = rand(dist)
+            x[edge] = 1.0
         end
+        
         sr = last(eigvals(x .* x))
         # println("sr = $sr")
         if (typeof(sr) <: Real) && (sr < 0.005)
-            # x .= x .- s.W # for random walk proposal
             # println("found a DAG; proposal = $proposal_choice, x = $x, count = $count, sr = $sr")
             return
         else
             # println("not a DAG; proposal = $proposal_choice,  x = $x, count = $count, sr = $sr")
-            x[edge] = s.W[edge] # refer to original entry
+            x[edge] = orig[edge] # refer to original entry
             if @isdefined reverse_edge
-                x[reverse_edge] = s.W[reverse_edge] # refer to original entry
+                x[reverse_edge] = orig[reverse_edge] # refer to original entry
             end
         end
     end
@@ -110,27 +144,24 @@ function _rand!(rng::AbstractRNG, s::DAGSampler, x::Matrix{T}) where T<:Abstract
 
 end
 
-function Base.rand(rng::AbstractRNG, s::DAGSampler)
-    # x = (size(s.W, 1) != size(s.W, 2) ? deepcopy(convert_to_full_adjacency(s.W)) : deepcopy(s.W))
-    x = deepcopy(s.W)
 
-    _rand!(rng, s, x)
+function Base.rand(rng::AbstractRNG, d::DAG)
+    x = BitMatrix(zeros(d.nv, d.nv))
 
-    # println("x=$x")
-    # return convert_to_reduced_adjacency(x)
+    _rand!(rng, d, x)
+
     return x
 end
 
-function Base.rand(d::DAG)
-    return Base.rand(sampler(d))
+function Distributions.logkernel(d::DAG, X::BitMatrix)
+    return 0.0
 end
 
-function Base.rand(rng::AbstractRNG, d::DAG)
-    return Base.rand(sampler(d))
-end
+# function Distributions.logpdf(d::DAG, X::BitMatrix) 
+#     return Distributions._logpdf(d, X)
+# end
 
-
-function Distributions._logpdf(d::DAG, X::AbstractMatrix{T}) where T<:AbstractFloat
+function Distributions._logpdf(d::DAG, X::BitMatrix)
     # println("debug me 3")
     # use the below for a static proposal
     γ = 0.2

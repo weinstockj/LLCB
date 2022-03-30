@@ -30,6 +30,24 @@ function get_sampling_params(simulation::Bool)
    return vals
 end
 
+@model function joint_model_discrete_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
+
+    # θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
+    # ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
+    # σₓ ~ Normal(-2.0, 1.0)
+
+
+    G ~ DAG(nv)
+    score = DAGScorer(G)
+
+    for j in 1:nv
+        observed = interventions[:, j] .!= 1
+        Turing.@addlogprob! ll(score, x[observed, :])     
+    end
+
+    return G, score
+end
+
 @model function joint_model_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
     β ~ filldist(Laplace(0, pars[:β_scale]), nv, nv) # this skips the diagonal elements
     l1 = norm(β, 1)
@@ -180,6 +198,8 @@ end
 
 end
 
+scale(A) = (A .- mean(A,dims=1)) ./ std(A,dims=1)
+
 function normalize(x::Matrix)
     return log1p.(x)
 end
@@ -195,7 +215,8 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         μ = mean(normalize(g.x) .* (1.0 .- g.interventions))
         # model = joint_model(normalize(g.x), size(g.x, 1), g.nv, one_hot(g.donor), length(unique(g.donor)), g.interventions, μ, 0.0)
         model = joint_model(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
-        model_mcmc = joint_model_mcmc(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
+        # model_mcmc = joint_model_mcmc(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
+        model_mcmc = joint_model_discrete_mcmc(scale(normalize(g.x)), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
     else
         μ = mean(g.x .* (1.0 .- g.interventions))
         model = joint_model(g.x, size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
@@ -279,7 +300,6 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
                     path_init[ω_indices],
                     path_init[σₓ_index]
                 )
-        # sampler = MH()
         :
         NUTS(
             sampling_pars[:warmups], sampling_pars[:acceptance];
@@ -289,11 +309,11 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
 
     path_init = vcat(
         vec(
-            daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv)))
-        ),
-        path_init[θ_indices],
-        path_init[ω_indices],
-        path_init[σₓ_index]
+            daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv))) .> 0
+        )
+        # path_init[θ_indices],
+        # path_init[ω_indices],
+        # path_init[σₓ_index]
     )
 
     model_chain = (
@@ -301,14 +321,14 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         sample(
             model_mcmc, 
             sampler,
-            MCMCThreads(), 
-            # MCMCSerial(), 
-            4000,
-            # 1;
-            Threads.nthreads();
+            # MCMCThreads(), 
+            MCMCSerial(), 
+            10,
+            1;
+            # Threads.nthreads();
             init_params = path_init, # doesn't work with MH sampler to specify initial state
             # discard_initial=2000,
-            thinning = 10
+            # thinning = 10
         )
         :
         sample(
@@ -324,7 +344,8 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
     # 253 seconds with forwarddiff
     chains_params = Turing.MCMCChains.get_sections(model_chain, :parameters)
     quantities = generated_quantities(model_mcmc, chains_params)
-    acceptance_rate = sampler.proposals[:β].accepted / sampler.proposals[:β].total
+    # acceptance_rate = sampler.proposals[:β].accepted / sampler.proposals[:β].total
+    acceptance_rate = sampler.proposals[:G].accepted / sampler.proposals[:G].total
     println("acceptance_rate = $acceptance_rate")
     return model_chain, quantities, path_init, sampler
     # return model, sampler, model_chain, quantities, path_init, ψs
@@ -399,15 +420,14 @@ end
 
 function discrete_sampler(nv, n_donors, β_init, θ_init, ω_init, σₓ_init)
     return MH(
-        # :β => StaticProposal(DAG(deepcopy(β_init), 0.0, 0.10)),
-        :β => DAGProposal(DAG(deepcopy(β_init), 0.0, 0.05)),
+        :G => DAGProposal(DAG(size(β_init, 1))),
         # :β => RandomWalkProposal(DAG(deepcopy(β_init), 0.0, 0.10)),
         # :θ => StaticProposal(MvNormal(θ_init, I * 0.03)),
         # :ω => StaticProposal(MvNormal(ω_init, I * 0.03)),
-        :θ => RandomWalkProposal(MvNormal(zeros(length(θ_init)), I * 0.03)),
-        :ω => RandomWalkProposal(MvNormal(zeros(length(ω_init)), I * 0.03)),
+        # :θ => RandomWalkProposal(MvNormal(zeros(length(θ_init)), I * 0.03)),
+        # :ω => RandomWalkProposal(MvNormal(zeros(length(ω_init)), I * 0.03)),
         # :σₓ => StaticProposal(Truncated(Normal(σₓ_init, 0.15), 0, Inf))
-        :σₓ => RandomWalkProposal(Normal(0., 0.10))
+        # :σₓ => RandomWalkProposal(Normal(0., 0.10))
     )
 
 end
