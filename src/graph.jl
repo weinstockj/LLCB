@@ -112,3 +112,103 @@ function posteriorGraph!(graph::interventionGraph, parsed_chain::DataFrame, beta
     end
 
 end
+
+function topological_sort(G::BitMatrix)
+     
+    g = deepcopy(G)
+    L = Vector{Int}()
+    S = Vector{Int}() # nodes with no parents
+    nv = size(G, 1)
+    @assert nv == size(G, 2)
+
+    for l in 1:nv
+        if all(sum(g[:, l]) == 0)
+            push!(S, l)
+        end
+    end
+
+    while length(S) > 0
+        n = popfirst!(S)
+        push!(L, n)
+        children = findall(x -> x != 0, g[n, :])
+        for m in children
+            g[n, m] = 0
+            parents = findall(x -> x != 0, g[:, m])
+            if length(parents) == 0
+                push!(S, m)
+            end
+        end
+    end
+
+    if sum(g) != 0
+        # error("graph has a cycle")
+        return nothing
+    else
+        return L
+    end
+end
+
+
+function gauss_ci_test(n::Int64, C::Matrix{Float64}, i, j, S = (), α = 0.05)
+
+    if length(S) > 0
+        @assert length(intersect(vcat(i, j), S)) == 0
+    end
+
+    if length(S) == 0
+        r = C[i, j]
+    elseif length(S) == 1
+        k = S[1]
+        r = (C[i, j] - C[i, k] * C[j, k]) / sqrt((1 - C[j, k] ^ 2) * (1 - C[i, k] ^ 2))
+    else 
+        θ = inv(C[vcat(i, j, S), vcat(i, j, S)])
+        r = -θ[1, 2] / sqrt(θ[1, 1] * θ[2, 2])
+    end
+
+    critical = quantile(Normal(), 1 - α / 2.0)
+    stat = sqrt(n - length(S) - 3) * abs(.5 * log1p(2 * r / (1.0 - r)))
+    return abs(stat) > critical # return true if reject
+end
+
+# mutable struct SufficientStats
+#     n::Int64
+#     μhat::Vector{Float64}
+#     Σhat::Matrix{Float64}
+# end
+#
+# function SufficientStats(X::Matrix{Float64})
+#     n = size(X, 1)
+#     μhat = vec(Statistics.mean(X, dims=1))
+#     Σhat = cor(X)
+#
+#     return SufficientStats(
+#         n,
+#         μhat,
+#         Σhat
+#     )
+# end
+
+function IMAP(perm::Vector{Int64}, α, X::Matrix{Float64}, interventions)
+    
+    nv = length(perm)
+    N = size(X, 1)
+
+    G = BitMatrix(zeros(nv, nv))
+
+    for i in 1:(nv - 1)
+        for j in (i+1):nv
+            parents = 1:(j-1) # indices in perm
+            S = [perm[p] for p in parents] # node ids of parents
+            S = setdiff(S, perm[i])
+            # observed = interventions[:, j] .!= 1
+            observed = 1:N
+            XO = @view X[observed, :]
+            ci_test = gauss_ci_test(size(XO, 1), cor(XO), perm[i], perm[j], S, α)
+            if ci_test
+                G[perm[i], perm[j]] = 1
+            end
+        end
+    end
+
+    return G
+end
