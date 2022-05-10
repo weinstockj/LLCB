@@ -28,6 +28,7 @@ using Pathfinder.Optim.LineSearches
 using Serialization
 using ProgressMeter
 using CairoMakie
+using SpecialFunctions
 # using GraphMakie
 using Plots
 using GraphRecipes
