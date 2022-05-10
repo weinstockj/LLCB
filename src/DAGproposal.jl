@@ -2,10 +2,12 @@ mutable struct DAGProposal{P} <: AdvancedMH.Proposal{P}
     proposal::P
     accepted::Int64
     total   ::Int64
+    X       ::Matrix{Float64}
+    interventions::Matrix{Int8}
 end
 
-function DAGProposal(p::DAG) 
-    DAGProposal(p, 0, 0)
+function DAGProposal(p::DAG, X, interventions) 
+    DAGProposal(p, 0, 0, X, interventions)
 end
 
 accepted!(p::DAGProposal) = p.accepted += 1
@@ -24,61 +26,37 @@ function AdvancedMH.propose(
     t
 )
     proposal.total += 1
-    p = size(t, 1) # genes 
-
-    max = 30
-    count = 0
-
-    orig = deepcopy(t)
-    x = deepcopy(t)
+    nv = size(t, 1) # genes 
 
     println("current transition is $t")
-    
-    non_zero_edges = findall(abs.(x) .> 0.0)
-    reversed_edges = reverse.(non_zero_edges)
-    zero_edges = findall(x .== 0.0)
-    legal_new_edges = setdiff(zero_edges, reversed_edges)
-    choices = ("delete", "reverse", "add")
-    choice_dist = Categorical([1/3, 1/3, 1/3])
-    local edge
-    local reverse_edge
-    sr = 0.0
+    x = deepcopy(t)
+    perm = topological_sort(BitMatrix(x .!= 0))
+    new_perm = deepcopy(perm)
 
-    while count < max
-        count += 1
-        proposal_choice = choices[rand(choice_dist)]
-        # println("choice = $proposal_choice")
-        if proposal_choice == "delete"
-            edge = sample(non_zero_edges)
-            x[edge] = 0
-            # i = Base.rand(1:d)
-            # j = Base.rand(setdiff(1:d, i)) # no diagonals
-        elseif proposal_choice == "reverse"
-            edge = sample(non_zero_edges)
-            # reverse_edge = CartesianIndex(last(Tuple(edge)), first(Tuple(edge)))
-            reverse_edge = reverse(edge)
-            x[reverse_edge] = x[edge] 
-            x[edge] = 0.0
-        else # add new edge
-            edge = sample(legal_new_edges)
-            x[edge] = 1.0
-        end
-        
-        sr = last(eigvals(x .* x))
-        # println("sr = $sr")
-        if (typeof(sr) <: Real) && (sr < 0.005)
-            println("found a DAG; proposal = $proposal_choice, x = $x, count = $count, sr = $sr")
-            return x
-        else
-            # println("not a DAG; proposal = $proposal_choice,  x = $x, count = $count, sr = $sr")
-            x[edge] = orig[edge] # refer to original entry
-            if @isdefined reverse_edge
-                x[reverse_edge] = orig[reverse_edge] # refer to original entry
-            end
-        end
+    node_swap = rand(1:nv)
+    local node_swap_partner
+
+    if node_swap == 1
+        node_swap_partner = 2
+        @assert nv >= node_swap_partner && node_swap_partner >= 1
+    elseif node_swap == nv
+        node_swap_partner = nv - 1
+        @assert nv >= node_swap_partner && node_swap_partner >= 1
+    else
+        node_swap_partner = node_swap + rand((-1, 1))
     end
 
-    error("can't sample new DAG after $max attempts, sr = $sr")
+    new_perm[node_swap] = perm[node_swap_partner]
+    new_perm[node_swap_partner] = perm[node_swap]
+
+    println("perm = $perm")
+    println("new_perm = $new_perm")
+    @assert new_perm != perm
+
+    proposed_g = IMAP(new_perm, .01, proposal.X, proposal.interventions)
+    println("proposed transition is $proposed_g")
+
+    return proposed_g
 end
 
 function AdvancedMH.q(proposal::DAGProposal, t, t_cond) 
@@ -99,7 +77,9 @@ function AbstractMCMC.step(
     kwargs...
 )
     # Generate a new proposal.
+    println("step here 1")
     candidate = AdvancedMH.propose(rng, sampler, model, transition_prev)
+    println("step here 2")
 
     # Calculate the log acceptance probability and the log density of the candidate.
     logdensity_candidate = AdvancedMH.logdensity(model, candidate)
@@ -122,3 +102,46 @@ end
 
 accepted!(p::AdvancedMH.RandomWalkProposal) = nothing
 accepted!(p::AdvancedMH.StaticProposal) = nothing
+
+function DynamicPPL.initialize_parameters!!(vi::AbstractVarInfo, init_params, spl::Sampler)
+    @debug "Using passed-in initial variable values" init_params
+
+    println("init_params = $init_params")
+    # Flatten parameters.
+    init_theta = mapreduce(vcat, init_params) do x
+        vec([x;])
+    end
+
+    println("init_theta = $init_theta")
+    # Get all values.
+    linked = DynamicPPL.islinked(vi, spl)
+    if linked
+        # TODO: Make work with immutable `vi`.
+        DynamicPPL.invlink!(vi, spl)
+    end
+    theta = vi[spl]
+
+    println("length(theta) = $(length(theta))")
+    println("length(init_theta) = $(length(init_theta))")
+
+    length(theta) == length(init_theta) ||
+        error("Provided initial value doesn't match the dimension of the model")
+
+
+    # Update values that are provided.
+    for i in 1:length(init_theta)
+        x = init_theta[i]
+        if x !== missing
+            theta[i] = x
+        end
+    end
+
+    # Update in `vi`.
+    vi = DynamicPPL.setindex!!(vi, theta, spl)
+    if linked
+        # TODO: Make work with immutable `vi`.
+        DynamicPPL.link!(vi, spl)
+    end
+
+    return vi
+end
