@@ -32,20 +32,30 @@ end
 
 @model function joint_model_discrete_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
 
-    # θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
-    # ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
-    # σₓ ~ Normal(-2.0, 1.0)
+    β ~ DAG(nv)
 
+    θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
+    ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
 
-    G ~ DAG(nv)
-    score = DAGScorer(G)
-
-    for j in 1:nv
-        observed = interventions[:, j] .!= 1
-        Turing.@addlogprob! ll(score, x[observed, :])     
+    # println("β = $β")
+    scorer = DAGScorer(BitMatrix(β))
+    bias = Array{T}(undef, n, nv)
+    for i in 1:n
+        for j in 1:nv
+            bias[i, j] = μ + θ[j] + ω[donors[i]]
+        end
     end
 
-    return G, score
+    scores = Array{T}(undef, nv)
+    for j in 1:nv
+        observed = interventions[:, j] .!= 1
+        perturbed_score = bge(scorer, x[observed, :] .- bias[observed, :]) / nv
+        # println("perturbed_score = $perturbed_score")
+        Turing.@addlogprob! perturbed_score
+        scores[j] = perturbed_score
+    end
+
+    return β
 end
 
 @model function joint_model_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
@@ -59,6 +69,7 @@ end
     ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
     # σₓ ~ truncated(Cauchy(0, pars[:σₓ_scale]), 0, Inf)
     σₓ ~ Normal(-2.0, 1.0)
+
 
     λₓ = Array{T}(undef, n, nv)
     for i in 1:n
@@ -216,7 +227,7 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         # model = joint_model(normalize(g.x), size(g.x, 1), g.nv, one_hot(g.donor), length(unique(g.donor)), g.interventions, μ, 0.0)
         model = joint_model(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
         # model_mcmc = joint_model_mcmc(normalize(g.x), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
-        model_mcmc = joint_model_discrete_mcmc(scale(normalize(g.x)), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
+        model_mcmc = joint_model_discrete_mcmc((normalize(g.x)), size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
     else
         μ = mean(g.x .* (1.0 .- g.interventions))
         model = joint_model(g.x, size(g.x, 1), g.nv, g.donor, length(unique(g.donor)), g.interventions, μ, model_pars)
@@ -235,26 +246,11 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
     # model_chain = sample(model, NUTS(0.65), 1)
     init = vcat(
         zeros(g.nv * (g.nv - 1)), #beta
-        # log(0.2), # tau_a
-        # log(0.3), # tau_b
-        # log.(zeros(g.nv * (g.nv - 1)) .+ .10), # local_scale_a
-        # log.(zeros(g.nv * (g.nv - 1)) .+ .10), # local_scale_b
-        # log(0.2), # τ
-        # log.(zeros(g.nv * (g.nv - 1)) .+ 1.0), # λ
-        # 0.0, # R
-        # 0.0, # OP
-        # 0.0, # β_mean
         zeros(g.nv), # θ
-        # log(1.0), # μ
         zeros(length(unique(g.donor))), # ω,
         log(0.1) # σₓ
     )
-    # model_chain = sample(model, MH(), 2, init_params = init)
-    # 14 hours, no samples...
-    # model_chain = sample(model, NUTS(0.65), MCMCThreads(), 20, 4)
     rng = MersenneTwister(1)
-    # map_estimate = optimize(model, MAP())
-    # println("$(now()) running map")
     obj = optim_objective(model, MAP(); constrained=false)
     # init = obj.init()
     logp(x) = -obj.obj(x)
@@ -280,10 +276,7 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         # iterations = 300
     )
     path_init = obj.transform(ψs[:, 1])
-    # threshold = 0.08
     β_indices = 1:(g.nv * (g.nv - 1))
-    # β_small = findall(abs.(path_init) .< threshold)
-    # path_init[intersect(β_indices, β_small)] .= 0.00 # change path init
     θ_indices = (maximum(β_indices) + 1):(maximum(β_indices) + g.nv)
     ω_indices = (maximum(θ_indices) + 1):(maximum(θ_indices) + length(unique(g.donor)))
     σₓ_index = length(path_init)
@@ -298,7 +291,9 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
                     daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv))),
                     path_init[θ_indices],
                     path_init[ω_indices],
-                    path_init[σₓ_index]
+                    # path_init[σₓ_index]
+                    normalize(g.x),
+                    g.interventions
                 )
         :
         NUTS(
@@ -307,13 +302,12 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
         ) 
     )
 
+    vec_β_init = vec(daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv))))
+
     path_init = vcat(
-        vec(
-            daggify(convert_to_full_adjacency(reshape(path_init[β_indices], g.nv - 1, g.nv))) .> 0
-        )
-        # path_init[θ_indices],
-        # path_init[ω_indices],
-        # path_init[σₓ_index]
+        vec_β_init .!= 0,
+        path_init[θ_indices],
+        path_init[ω_indices]
     )
 
     model_chain = (
@@ -323,12 +317,13 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
             sampler,
             # MCMCThreads(), 
             MCMCSerial(), 
-            10,
-            1;
+            500,
+            2;
             # Threads.nthreads();
-            init_params = path_init, # doesn't work with MH sampler to specify initial state
+            # init_params = Iterators.repeated(path_init), # doesn't work with MH sampler to specify initial state
+            init_params = path_init,
             # discard_initial=2000,
-            # thinning = 10
+            thinning = 10
         )
         :
         sample(
@@ -344,47 +339,21 @@ function fit_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedT
     # 253 seconds with forwarddiff
     chains_params = Turing.MCMCChains.get_sections(model_chain, :parameters)
     quantities = generated_quantities(model_mcmc, chains_params)
-    # acceptance_rate = sampler.proposals[:β].accepted / sampler.proposals[:β].total
-    acceptance_rate = sampler.proposals[:G].accepted / sampler.proposals[:G].total
+    acceptance_rate = sampler.proposals[:β].accepted / sampler.proposals[:β].total
     println("acceptance_rate = $acceptance_rate")
-    return model_chain, quantities, path_init, sampler
+    return model_chain, quantities, path_init, sampler, vec_β_init
     # return model, sampler, model_chain, quantities, path_init, ψs
     # return model, sampler, path_init
 end
 
-function convert_to_reduced_adjacency(W::Matrix{T}) where T <: Real
-    nv = size(W, 2)
-    β = Array{T}(undef, nv - 1, nv) 
+function discrete_sampler(nv, n_donors, β_init, θ_init, ω_init, X, interventions)
+    return MH(
+        :β => DAGProposal(DAG(size(β_init, 1)), X, interventions),
+        :θ => RandomWalkProposal(MvNormal(zeros(length(θ_init)), I * 0.03)),
+        :ω => RandomWalkProposal(MvNormal(zeros(length(ω_init)), I * 0.03))
+        # :σₓ => RandomWalkProposal(Normal(0., 0.10))
+    )
 
-    for i in 1:nv
-        for j in 1:nv
-            if i == j
-                continue
-            else
-                β[i - Int(i > j), j] = W[i, j]
-            end
-        end
-    end
-
-    return β
-end
-
-function convert_to_full_adjacency(β::Matrix{T}) where T <: Real
-    nv = size(β, 2)
-    W = Array{T}(undef, nv, nv) # I - the entire adjacency matrix
-
-    for i in 1:nv
-        for j in 1:nv
-            if i == j
-                W[i, j] = 0
-            else
-                @assert i - Int(i > j) <= (nv - 1)
-                W[i, j] = β[i - Int(i > j), j]
-            end
-        end
-    end
-
-    return W
 end
 
 function daggify(W::Matrix{T}) where T<:AbstractFloat
@@ -406,7 +375,7 @@ function daggify(W::Matrix{T}) where T<:AbstractFloat
         β[abs.(β) .<= threshold] .= 0.0
         sr = last(eigvals(β .* β))
         # sr = opnorm(β .* β, 2)
-        if (typeof(sr) <: Real) && (sr < .005)
+        if (typeof(sr) <: Real) && (sr < .005) && !isnothing(topological_sort(β .!= 0))
             dag = true
         else 
             threshold = sorted_vals[count]
@@ -418,19 +387,6 @@ function daggify(W::Matrix{T}) where T<:AbstractFloat
     return β
 end
 
-function discrete_sampler(nv, n_donors, β_init, θ_init, ω_init, σₓ_init)
-    return MH(
-        :G => DAGProposal(DAG(size(β_init, 1))),
-        # :β => RandomWalkProposal(DAG(deepcopy(β_init), 0.0, 0.10)),
-        # :θ => StaticProposal(MvNormal(θ_init, I * 0.03)),
-        # :ω => StaticProposal(MvNormal(ω_init, I * 0.03)),
-        # :θ => RandomWalkProposal(MvNormal(zeros(length(θ_init)), I * 0.03)),
-        # :ω => RandomWalkProposal(MvNormal(zeros(length(ω_init)), I * 0.03)),
-        # :σₓ => StaticProposal(Truncated(Normal(σₓ_init, 0.15), 0, Inf))
-        # :σₓ => RandomWalkProposal(Normal(0., 0.10))
-    )
-
-end
 
 # parse_chain(m[1], m[2], targets)
 function parse_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{Float64}}; targets=setdiff(ko_targets(), ko_controls()))
@@ -495,6 +451,36 @@ function parse_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{Float64}
     return result
 end
 
+function tabulate_permutations(posterior_adjacency::Matrix{Matrix{Float64}})
+
+    permutation_map = Vector{Int64}[]
+
+    stats = Dict()
+
+    n_samples = size(posterior_adjacency, 1)
+    n_chains = size(posterior_adjacency, 1)
+    for c in 1:n_chains
+        counts = Dict()
+        for i in 1:n_samples
+            perm = topological_sort(posterior_adjacency[i, c] .!= 0)
+            if length(permutation_map) == 0 || sum(permutation_map .== perm) == 0
+                push!(permutation_map, perm)
+            end
+
+            println("perm = $perm, permutation_map = $permutation_map")
+            idx = [i for i in 1:length(permutation_map) if permutation_map[i] == perm]
+            if !(idx in keys(counts))
+                push!(counts, idx => 0)
+            end
+
+            counts[idx] += 1 
+        end
+        stats[c] = (permutation_map, counts)
+    end
+
+    return stats
+end
+
 function extract_pair(chains::Chains, gene1::String, gene2::String; targets=setdiff(ko_targets(), ko_controls()))
     
     i = findall(x -> x == gene1, targets)[1]
@@ -510,4 +496,39 @@ function extract_pair(chains::Chains, gene1::String, gene2::String; targets=setd
     sub_chain   = chains[[sym_forward, sym_backward]]
 
     return sub_chain
+end
+
+function convert_to_reduced_adjacency(W::Matrix{T}) where T <: Real
+    nv = size(W, 2)
+    β = Array{T}(undef, nv - 1, nv) 
+
+    for i in 1:nv
+        for j in 1:nv
+            if i == j
+                continue
+            else
+                β[i - Int(i > j), j] = W[i, j]
+            end
+        end
+    end
+
+    return β
+end
+
+function convert_to_full_adjacency(β::Matrix{T}) where T <: Real
+    nv = size(β, 2)
+    W = Array{T}(undef, nv, nv) # I - the entire adjacency matrix
+
+    for i in 1:nv
+        for j in 1:nv
+            if i == j
+                W[i, j] = 0
+            else
+                @assert i - Int(i > j) <= (nv - 1)
+                W[i, j] = β[i - Int(i > j), j]
+            end
+        end
+    end
+
+    return W
 end
