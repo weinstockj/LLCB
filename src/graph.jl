@@ -212,3 +212,127 @@ function IMAP(perm::Vector{Int64}, α, X::Matrix{Float64}, interventions)
 
     return G
 end
+
+function linear_regress(x, y::Vector{Float64})
+    n = size(x, 1)
+    @assert n == size(y, 1)
+    @assert size(x, 2) >= 1
+    @assert size(y, 2) == 1
+
+    x = hcat(ones(n), x)
+
+    βhat = x'x \ x'y
+
+    return βhat[2]
+end
+
+function get_control_observations(g::interventionGraph)
+    control_samples = vec(sum(g.interventions, dims = 2) .== 0) # indices where row sums == 0
+    return control_samples
+end
+
+function get_experiment_observations(g::interventionGraph)
+    
+    targets = setdiff(names(g.data), ["donor", "intervention"])
+    nv = length(targets)
+    n  = size(g.x, 1)
+
+    control_samples = get_control_observations(g)
+    collection = Vector{BitArray}(undef, nv)
+    for i in 1:nv
+        experiment_observations = BitArray(g.interventions[:, i] + control_samples)
+        collection[i] = deepcopy(experiment_observations)
+    end
+
+    return collection
+end
+
+function center_control_means(g::interventionGraph, x::Matrix{Float64})
+    control_samples = get_control_observations(g)
+    means = mean(x[control_samples, :]; dims = 1)
+    return x .- means
+end
+
+function scale_control_sds(g::interventionGraph, x::Matrix{Float64})
+    control_samples = get_control_observations(g)
+    sds = std(x[control_samples, :]; dims = 1)
+    return x ./ sds
+end
+
+function estimate_total_effects(g::interventionGraph, log_normalize, center=true, scale=true)
+    targets = setdiff(names(g.data), ["donor", "intervention"])
+    experiment_observations = get_experiment_observations(g)
+    
+    nv = length(targets)
+    ndonors = length(unique(g.donor))
+
+    total_effects = zeros(nv, nv)
+
+    x = deepcopy(g.x)
+
+    if log_normalize
+        x = normalize(x)
+    end
+
+    if center
+        x = center_control_means(g, x)
+    end
+    if scale
+        x = scale_control_sds(g, x)
+    end
+   
+    for i in 1:nv
+        for j in 1:nv
+            if i == j
+                continue
+            else
+                total_effects[i, j] = linear_regress(
+                    hcat(
+                        x[experiment_observations[i], i], 
+                        Float64.(one_hot(g.donor)[experiment_observations[i], 1:(ndonors - 1)]) # remove last column for reference coding
+                    ), 
+                    x[experiment_observations[i], j]
+                )
+            end
+        end
+    end
+    
+    return total_effects
+end
+
+function get_cyclic_matrices(g::interventionGraph, log_normalize = true, center = true, scale = true)
+
+    total_effects = estimate_total_effects(g, log_normalize, center, scale)
+
+    T = zeros(g.nv * (g.nv - 1), g.nv * (g.nv - 1))
+    t = zeros(g.nv * (g.nv - 1))
+    row = 0
+    col = 0
+
+    for perturbed in 1:g.nv
+        for observed in 1:g.nv
+            if observed == perturbed
+                continue
+            else
+                row += 1 # this row includes the various experimental effects of a single gene
+                col = 0
+                for l in 1:g.nv
+                    for m in 1:g.nv
+                        if l == m 
+                            continue
+                        else
+                            col += 1
+                            if perturbed == l 
+                                T[row, col] = total_effects[l, m]
+                            end
+                        end
+                    end
+                end
+                t[row] = total_effects[perturbed, observed]
+            end
+        end
+    end
+
+    T[diagind(T)] .= 1.0
+    return T, t
+end

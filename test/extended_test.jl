@@ -1,7 +1,7 @@
 using Distributions
 using LinearAlgebra: I
 # using InferCausalGraph: d_connected_advi, parse_symbol_map
-using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, DAGScorer, bge
+using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, DAGScorer, bge, fit_cyclic_model
 using Statistics: var, std, cor, cov
 using Formatting: sprintf1
 using DataFrames: DataFrame, rename!, vcat
@@ -41,6 +41,16 @@ function tmp_grn()
     # true_grn[3, 5] = 0.07 #index β[3,5]
     true_grn[1, 4] = -0.006 #index β[1,4]
     true_grn[2, 5] = -0.008 #index β[2,5]
+    return true_grn
+end
+
+function cyclic_chain_graph()
+    true_grn = zeros(5, 5)
+    true_grn[1, 2] = 0.5 
+    true_grn[2, 3] = 0.5 
+    true_grn[3, 4] = 0.5 
+    true_grn[4, 5] = 0.5 
+    true_grn[5, 1] = 0.5
     return true_grn
 end
 
@@ -122,22 +132,83 @@ function sim_multi_modal_expression_and_fit_model()
     return model, graph
 end
 
-function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_replicates_per_donor::Int64 = 50, verbose=false)
+function sim_cyclic_expression_and_fit_model()
+    # true_grn = cyclic_chain_graph()
+    true_grn = big_tmp_grn()
+    expression = sim_cyclic_expression(true_grn, 3, 150, true)
+    graph = interventionGraph(expression)
+    model_pars = get_model_params(false, .01, .01)
+    sampling_pars = get_sampling_params(true)
+    model = fit_cyclic_model(graph, true, model_pars, sampling_pars)
+    return model, graph
+end
+
+function sim_cyclic_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_replicates_per_donor::Int64 = 50, include_controls=false)
+
+    ω = rand(Normal(0, .1), n_donors)
+
+    nv = size(true_adjacency, 1)
+    nrows = include_controls ? (nv + 1) * n_donors * n_replicates_per_donor : nv * n_donors * n_replicates_per_donor
+    x = zeros(nrows, nv)
+    intervention_vec = Vector{String}(undef, nrows)
+    donor_vec = Vector{String}(undef, nrows)
+    σₓ = 0.10
+
+    i = 1
+
+    K = include_controls ? nv + 1 : nv
+
+    for k in 1:K
+        init = rand(LogNormal(1, σₓ), n_donors * n_replicates_per_donor, nv)
+        β = deepcopy(true_adjacency)
+        if k <= nv # if k == K == nv + 1 treat as control sample without KO
+            β[:, k] .= 0
+            init[:, k] .= 0.0
+        end
+        xᵢ =  init * inv(I - β)
+        start_idx = 1 + (k - 1) * n_donors * n_replicates_per_donor
+        end_idx = k * n_donors * n_replicates_per_donor
+        x[start_idx:end_idx, :] = xᵢ
+
+        for d in 1:n_donors
+            for z in 1:n_replicates_per_donor
+                donor_vec[i] = string(d)
+                intervention_vec[i] = k <= nv ? "gene_$k" : "control"
+                i += 1
+            end
+        end
+
+    end
+
+    df = DataFrame(x, :auto)
+    rename!(df, [Symbol("gene_$i") for i in 1:nv])
+    df.intervention = intervention_vec
+    df.donor = donor_vec
+
+    return df
+end
+
+function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_replicates_per_donor::Int64 = 50, include_controls=false, verbose=false)
     nv = size(true_adjacency, 1)
     θ = rand(Normal(0, .1), nv)
     ω = rand(Normal(0, .1), n_donors)
     μ = 5.0
 
-    x = zeros(nv * n_donors * n_replicates_per_donor, nv)
-    intervention_vec = Vector{String}(undef, nv * n_donors * n_replicates_per_donor)
-    donor_vec = Vector{String}(undef, nv * n_donors * n_replicates_per_donor)
+    nrows = include_controls ? (nv + 1) * n_donors * n_replicates_per_donor : nv * n_donors * n_replicates_per_donor
+    x = zeros(nrows, nv)
+    intervention_vec = Vector{String}(undef, nrows)
+    donor_vec = Vector{String}(undef, nrows)
     σₓ = 0.03
 
     i = 1
 
-    for k in 1:nv
+    K = include_controls ? nv + 1 : nv
+
+    for k in 1:K
         β = deepcopy(true_adjacency)
-        β[:, k] .= 0
+        if k <= nv # if k == K == nv + 1 treat as control sample without KO
+            β[:, k] .= 0
+        end
         nodes_without_parents = Vector{Int}()
         for l in 1:nv
             if all(sum(β[:, l]) == 0)
@@ -152,7 +223,7 @@ function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_
         for d in 1:n_donors
             for z in 1:n_replicates_per_donor
                 donor_vec[i] = string(d)
-                intervention_vec[i] = "gene_$k"
+                intervention_vec[i] = k <= nv ? "gene_$k" : "control"
                 nodes_remaining = Vector{Int}()
                 xᵢ = zeros(nv)
                 for m in nodes_without_parents
@@ -160,7 +231,9 @@ function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_
                     xᵢ[m] = Float64(rand(Poisson(exp(μ + ω[d] + θ[m])), 1)[1])
                 end
 
-                xᵢ[k] = 0.0
+                if k <= nv # apply perturbation
+                    xᵢ[k] = 0.0
+                end
 
                 while length(nodes_remaining) >= 1
                     node = pop!(nodes_remaining)
@@ -236,20 +309,6 @@ function test_out_dir()
 
     out_dir = "/oak/stanford/groups/pritch/users/jweinstk/network_inference/InferCausalGraph/output/simulation_output"
     return out_dir
-end
-
-function parallel_sim_df(x_cause_y, include_confounders)
-    N_SIMS = 1000
-    sims = Vector{NamedTuple}(undef, N_SIMS)
-    Threads.@threads for i in 1:N_SIMS
-        if x_cause_y
-            sims[i] = sim(include_confounders)
-        else
-            sims[i] = sim_reverse(include_confounders)
-        end
-    end
-    df = DataFrame(sims)
-    return df
 end
 
 function write_sims()
