@@ -3,7 +3,7 @@ function fit_cyclic_model(g::interventionGraph, log_normalize::Bool, model_pars:
 
     μ = mean(normalize(g.x) .* (1.0 .- g.interventions))
 
-    T, t = get_cyclic_matrices(g, log_normalize)
+    T, t, edges = get_cyclic_matrices(g, log_normalize)
 
     model = joint_cyclic_model(g.nv, model_pars, T, t)
 
@@ -39,7 +39,7 @@ function fit_cyclic_model(g::interventionGraph, log_normalize::Bool, model_pars:
     return model_chain, quantities
 end
 
-function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{Float64}}; targets=setdiff(ko_targets(), ko_controls()))
+function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{Float64}}, edges::Vector{Pair}; targets=setdiff(ko_targets(), ko_controls()))
 
     n_samples = size(posterior_adjacency, 1) # slightly misleading - total mcmc samples is n_samples * n_chains
     n_chains  = size(posterior_adjacency, 2)
@@ -78,13 +78,11 @@ function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{F
 
     result = DataFrame() # convert to 'long' format
 
-    for i in 1:nv
-        for j in 1:nv
-
-            # row_label = "gene_$i"
-            # col_label = "gene_$j"
-            row_label = targets[i]
-            col_label = targets[j]
+    for (z, e) in enumerate(edges)
+        i = e.first
+        j = e.second
+        row_label = targets[i]
+        col_label = targets[j]
 
             if i == j
 
@@ -105,7 +103,8 @@ function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{F
                 # (1, 2) -> (1)
                 # 2 - Int(2 > 1) == 1
                 # (3, 1) -> (2) * (nv - 1) + 1 - Int(1 > 3) = 2 * nv - 2 + 1 - 0
-                alt_idx = (i - 1) * (nv - 1) + j - Int(j > i)
+                # alt_idx = (i - 1) * (nv - 1) + j - Int(j > i)
+                alt_idx = z
                 summary   = summarize(chains[[Symbol("β[$alt_idx]")]])
                 quantiles = quantile(chains[[Symbol("β[$alt_idx]")]])
 
@@ -115,8 +114,8 @@ function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{F
                     :estimate => summary[:, :mean],
                     Symbol("2.5%") => quantiles[:, Symbol("2.5%")],
                     Symbol("97.5%") => quantiles[:, Symbol("97.5%")],
-                    :PIP => posterior_pip[i, j],
-                    :lsfr => posterior_lsfr[i, j],
+                    :PIP => posterior_pip[j, i],
+                    :lsfr => posterior_lsfr[j, i],
                     :rhat => summary[:, :rhat],
                     :ess => summary[:, :ess],
                     :std => summary[:, :std]
@@ -125,7 +124,7 @@ function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{F
             end
 
             push!(result, row)
-        end
+        # end
     end
 
     return result

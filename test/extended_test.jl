@@ -1,7 +1,7 @@
 using Distributions
 using LinearAlgebra: I
 # using InferCausalGraph: d_connected_advi, parse_symbol_map
-using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, DAGScorer, bge, fit_cyclic_model
+using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, DAGScorer, bge, fit_cyclic_model, get_cyclic_matrices, parse_cyclic_chain
 using Statistics: var, std, cor, cov
 using Formatting: sprintf1
 using DataFrames: DataFrame, rename!, vcat
@@ -133,14 +133,18 @@ function sim_multi_modal_expression_and_fit_model()
 end
 
 function sim_cyclic_expression_and_fit_model()
-    # true_grn = cyclic_chain_graph()
-    true_grn = big_tmp_grn()
+    true_grn = cyclic_chain_graph()
+    # true_grn = big_tmp_grn()
     expression = sim_cyclic_expression(true_grn, 3, 150, true)
     graph = interventionGraph(expression)
     model_pars = get_model_params(false, .01, .01)
     sampling_pars = get_sampling_params(true)
+    cyclic_matrices = get_cyclic_matrices(graph, true, true, true)
     model = fit_cyclic_model(graph, true, model_pars, sampling_pars)
-    return model, graph
+    parsed = parse_cyclic_chain(
+        model[1], model[2], cyclic_matrices[3]; targets=["gene_$i" for i in 1:g.nv]
+    )
+    return model, graph, parsed
 end
 
 function sim_cyclic_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_replicates_per_donor::Int64 = 50, include_controls=false)
