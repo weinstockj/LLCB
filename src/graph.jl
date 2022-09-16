@@ -309,30 +309,55 @@ function get_cyclic_matrices(g::interventionGraph, log_normalize = true, center 
     row = 0
     col = 0
 
-    for perturbed in 1:g.nv
+    edges = Vector{Pair}()
+
+    # for perturbed in 1:g.nv
         for observed in 1:g.nv
-            if observed == perturbed
-                continue
-            else
-                row += 1 # this row includes the various experimental effects of a single gene
-                col = 0
-                for l in 1:g.nv
-                    for m in 1:g.nv
-                        if l == m 
-                            continue
-                        else
-                            col += 1
-                            if perturbed == l 
-                                T[row, col] = total_effects[l, m]
-                            end
-                        end
+            # if observed == perturbed
+            #     continue
+            # else
+                # experiment_start = (observed - 1 - Int(observed > perturbed)) * g.nv + 1
+                experiment_start = (observed - 1) * (g.nv - 1) + 1
+                experiment_end = experiment_start + (g.nv - 1) - 1
+                experiment_idx = experiment_start:experiment_end
+                @assert length(experiment_idx) == g.nv - 1
+                # println("observed = $observed, experiment idx = $experiment_idx")
+                # Tᵥ = zeros(g.nv, g.nv)
+                # for i in 1:g.nv
+                #     for j in 1:g.nv
+                #         Tᵥ[i, j] = total_effects[i, j]
+                #     end
+                # end
+                Tᵥ = total_effects[1:g.nv .!= observed, 1:g.nv .!= observed]
+                Tᵥ[diagind(Tᵥ)] .= 1.0
+                T[experiment_idx, experiment_idx] = Tᵥ
+                t[experiment_idx] = total_effects[1:g.nv .!= observed, observed]
+
+                for e in 1:g.nv
+                    if e != observed
+                        push!(edges, Pair(e, observed))
                     end
                 end
-                t[row] = total_effects[perturbed, observed]
-            end
-        end
+                
+
+                # row += 1 # this row includes the various experimental effects of a single gene
+                # col = 0
+                # for l in 1:g.nv
+                #     for m in 1:g.nv
+                #         if l == m 
+                #             continue
+                #         else
+                #             col += 1
+                #             if perturbed == l 
+                #                 T[row, col] = total_effects[l, m]
+                #             end
+                #         end
+                #     end
+                # end
+                # t[row] = total_effects[perturbed, observed]
+            # end
+        # end
     end
 
-    T[diagind(T)] .= 1.0
-    return T, t
+    return T, t, edges
 end
