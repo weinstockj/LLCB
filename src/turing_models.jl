@@ -1,28 +1,39 @@
-@model function joint_cyclic_model(nv, pars, T, t, ::Type{S} = Float64) where {S}
+@model function joint_cyclic_model(nv::Int64, pars, T, t, ::Type{S} = Float64) where {S}
     
-    β ~ filldist(Laplace(0, 3.0), nv * (nv - 1))
-    # β ~ filldist(Normal(0, 1.0), nv * (nv - 1))
+    # β ~ filldist(Laplace(0, 5.0), nv * (nv - 1))
+    β ~ filldist(Normal(0, 1.0), nv * (nv - 1))
+    # parents are rows, children are columns
     W = Array{S}(undef, nv, nv) # I - the entire adjacency matrix
-    σₓ ~ Normal(-2.0, 1.0)
+    # σₓ ~ Normal(-3.0, 4.0)
+    σₓ ~ filldist(Normal(-3, 5), nv)
+    temp_σₓ = reduce(vcat, (fill(x, nv - 1) for x in σₓ))
 
-    for i in 1:nv
-        for j in 1:nv
+    # @simd for i in 1:nv
+    @inbounds for i in 1:nv
+        @inbounds for j in 1:nv
             if i == j
                 W[i, j] = 0
             else
-                @assert i - Int(i > j) <= (nv - 1)
+                # @assert i - Int(i > j) <= (nv - 1)
                 # W[i, j] = β[i - Int(i > j) + j]
                 alt_idx = (i - 1) * (nv - 1) + j - Int(j > i)
                 W[i, j] = β[alt_idx]
             end
         end
     end
-    Wdet = det(W)
+    # Wdet = det(W)
+    # Turing.@addlogprob! loglikelihood(Normal(0.0, 0.3), Wdet)
+    R = spectral_radius(W)
+    # Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:R_scale]), R)
+    Turing.@addlogprob! loglikelihood(Normal(0.0, 10.0), R)
+    # penalize number of parents assigned to each child node
+    Turing.@addlogprob! sum(loglikelihood(Normal(0.0, nv * 0.1), x) for x in vec(sum(abs.(W); dims = 1)))
     
-    Turing.@addlogprob! loglikelihood(Normal(0.0, 0.3), Wdet)
-    t ~ MvNormal(T*β, I * exp(σₓ))
+    t ~ MvNormal(T*β, I * exp.(temp_σₓ))
+    # t ~ MvNormal(T*β, I * exp(σₓ))
     # t .~ Normal.(T*β, 0.1) 
     return W
+    # return β
 end
 
 @model function joint_model_discrete_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
