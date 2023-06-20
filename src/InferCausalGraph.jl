@@ -13,27 +13,32 @@ using Distributions
 using AdvancedMH
 using DynamicPPL
 using Turing
-using Turing.Variational
+# using Turing.Variational
 using Random
 using Pathfinder
 using ForwardDiff
 using Debugger
 # using Zygote
-# using ReverseDiff
+using Accessors: Accessors
+using SparseArrays
+using ReverseDiff
+using AbstractDifferentiation
 # using KrylovKit
 # using Expokit
 # using ExponentialAction
 using Optim
+using Optimization
 using Pathfinder.Optim.LineSearches
 using Serialization
 using ProgressMeter
-using CairoMakie
+using SciMLBase: SciMLBase
+# using CairoMakie
 using SpecialFunctions
 # using GraphMakie
-using Plots
-using GraphRecipes
-using Formatting
-using NetworkLayout
+# using Plots
+# using GraphRecipes
+# using Formatting
+# using NetworkLayout
 
 # import Cairo
 # using Gadfly
@@ -48,6 +53,6 @@ include("turing_models.jl")
 include("infer_cyclic_edges.jl")
 include("infer_edges.jl")
 include("utils.jl")
-include("plot_graph.jl")
+# include("plot_graph.jl")
 
 end
