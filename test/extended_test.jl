@@ -140,9 +140,9 @@ function sim_cyclic_expression_and_fit_model()
     model_pars = get_model_params(false, .01, .01)
     sampling_pars = get_sampling_params(true)
     cyclic_matrices = get_cyclic_matrices(graph, true, true, true)
-    model = fit_cyclic_model(graph, true, model_pars, sampling_pars)
+    model = fit_cyclic_model(graph, model_pars, sampling_pars)
     parsed = parse_cyclic_chain(
-        model[1], model[2], cyclic_matrices[3]; targets=["gene_$i" for i in 1:g.nv]
+        model[1], model[2], cyclic_matrices[3]; targets=["gene_$i" for i in 1:graph.nv]
     )
     return model, graph, parsed
 end
