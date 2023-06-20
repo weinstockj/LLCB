@@ -1,1 +1,16 @@
 /Manifest.toml
+scratch/
+modules.sh
+*.swp
+*.swj
+src/*.swp
+*.swn
+*.swo
+*.swl
+*.swm
+*.csv
+*.swk
+*.jls
+*.txt
+*.png
+*.jpeg
