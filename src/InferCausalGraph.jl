@@ -18,37 +18,24 @@ using Random
 using Pathfinder
 using ForwardDiff
 using Debugger
-# using Zygote
 using Accessors: Accessors
 using SparseArrays
 using ReverseDiff
 using AbstractDifferentiation
-# using KrylovKit
-# using Expokit
-# using ExponentialAction
 using Optim
 using Optimization
 using Pathfinder.Optim.LineSearches
 using Serialization
 using ProgressMeter
 using SciMLBase: SciMLBase
-# using CairoMakie
 using SpecialFunctions
-# using GraphMakie
-# using Plots
-# using GraphRecipes
-# using Formatting
-# using NetworkLayout
-
-# import Cairo
-# using Gadfly
 
 # Write your package code here.
 include("graph.jl")
 include("data.jl")
 include("expm.jl")
-include("DAGsampler.jl")
-include("DAGproposal.jl")
+# include("DAGsampler.jl")
+# include("DAGproposal.jl")
 include("turing_models.jl")
 include("infer_cyclic_edges.jl")
 include("infer_edges.jl")
