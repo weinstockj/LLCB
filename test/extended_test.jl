@@ -1,7 +1,8 @@
 using Distributions
 using LinearAlgebra: I
 # using InferCausalGraph: d_connected_advi, parse_symbol_map
-using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, DAGScorer, bge, fit_cyclic_model, get_cyclic_matrices, parse_cyclic_chain
+# using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, DAGScorer, bge, fit_cyclic_model, get_cyclic_matrices, parse_cyclic_chain
+using InferCausalGraph: interventionGraph, fit_model, get_model_params, get_sampling_params, fit_cyclic_model, get_cyclic_matrices, parse_cyclic_chain
 using Statistics: var, std, cor, cov
 using Formatting: sprintf1
 using DataFrames: DataFrame, rename!, vcat
@@ -140,7 +141,7 @@ function sim_cyclic_expression_and_fit_model()
     model_pars = get_model_params(false, .01, .01)
     sampling_pars = get_sampling_params(true)
     cyclic_matrices = get_cyclic_matrices(graph, true, true, true)
-    model = fit_cyclic_model(graph, model_pars, sampling_pars)
+    model = fit_cyclic_model(graph, false, model_pars, sampling_pars)
     parsed = parse_cyclic_chain(
         model[1], model[2], cyclic_matrices[3]; targets=["gene_$i" for i in 1:graph.nv]
     )
@@ -277,37 +278,37 @@ function sim_expression(true_adjacency::Matrix{Float64}, n_donors::Int64 = 3, n_
     return df
 end
 
-function test_bge()
-    names = ["A", "B", "C", "D", "E", "F", "G"]
-    path = "/home/users/jweinstk/.julia/dev/InferCausalGraph/test/bnlearn_gauss_net.csv"
-    grn = Matrix(read(path, DataFrame; types = Dict(
-        1 => Bool,
-        2 => Bool,
-        3 => Bool,
-        4 => Bool,
-        5 => Bool,
-        6 => Bool,
-        7 => Bool
-    )))
+# function test_bge()
+#     names = ["A", "B", "C", "D", "E", "F", "G"]
+#     path = "/home/users/jweinstk/.julia/dev/InferCausalGraph/test/bnlearn_gauss_net.csv"
+#     grn = Matrix(read(path, DataFrame; types = Dict(
+#         1 => Bool,
+#         2 => Bool,
+#         3 => Bool,
+#         4 => Bool,
+#         5 => Bool,
+#         6 => Bool,
+#         7 => Bool
+#     )))
 
-    path = "/home/users/jweinstk/.julia/dev/InferCausalGraph/test/bnlearn_gauss_net_data.csv"
-    data = Matrix(read(path, DataFrame; types = Dict(
-        1 => Float64,
-        2 => Float64,
-        3 => Float64,
-        4 => Float64,
-        5 => Float64,
-        6 => Float64,
-        7 => Float64
-    )))
+#     path = "/home/users/jweinstk/.julia/dev/InferCausalGraph/test/bnlearn_gauss_net_data.csv"
+#     data = Matrix(read(path, DataFrame; types = Dict(
+#         1 => Float64,
+#         2 => Float64,
+#         3 => Float64,
+#         4 => Float64,
+#         5 => Float64,
+#         6 => Float64,
+#         7 => Float64
+#     )))
 
-    # score should be -53258.94 according to bnlearn, and -53137 according to BiDAG
-    grn = BitMatrix(grn)
-    scorer = DAGScorer(grn)
-    val = bge(scorer, data)
-    @assert abs(val - 53137.476 < 1.0)
-    return grn, data
-end
+#     # score should be -53258.94 according to bnlearn, and -53137 according to BiDAG
+#     grn = BitMatrix(grn)
+#     scorer = DAGScorer(grn)
+#     val = bge(scorer, data)
+#     @assert abs(val - 53137.476 < 1.0)
+#     return grn, data
+# end
 
 function test_out_dir()
 
