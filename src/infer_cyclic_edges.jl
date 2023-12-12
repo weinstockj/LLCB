@@ -1,3 +1,20 @@
+"""
+fit_cyclic_model(g, false, model_pars, sampling_pars)
+
+This fits the LLCB model itself. The  first argument must
+be an object of class `interventionGraph` . 
+
+```julia-repl
+    model = fit_cyclic_model(graph, false, model_pars, sampling_pars)
+```
+
+Returns:
+1. The MCMCChains object from pathfinder
+2. The posterior adjacency matrix samples
+3. The Turing model
+4. The entire pathfinder object
+
+"""
 function fit_cyclic_model(g::interventionGraph, log_normalize::Bool, model_pars::NamedTuple, sampling_pars::NamedTuple)
     Turing.setadbackend(:forwarddiff)
 
@@ -69,6 +86,17 @@ function fit_cyclic_model(g::interventionGraph, log_normalize::Bool, model_pars:
     return model_chain, quantities, model, result_multi
 end
 
+"""
+parse_cyclic_chain(chains, posterior_adjacency, edges)
+
+```julia-repl
+    model = fit_cyclic_model(graph, false, model_pars, sampling_pars)
+    parsed = parse_cyclic_chain(
+        model[1], model[2], cyclic_matrices[3]
+    )
+```
+
+"""
 function parse_cyclic_chain(chains::Chains, posterior_adjacency::Matrix{Matrix{Float64}}, edges::Vector{Pair}; targets=setdiff(ko_targets(), ko_controls()))
 
     n_samples = size(posterior_adjacency, 1) # slightly misleading - total mcmc samples is n_samples * n_chains

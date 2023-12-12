@@ -42,4 +42,6 @@ include("infer_edges.jl")
 include("utils.jl")
 # include("plot_graph.jl")
 
+export interventionGraph, parse_cyclic_chain, fit_cyclic_model, estimate_total_effects, spectral_radius
+
 end
