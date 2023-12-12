@@ -63,8 +63,10 @@ jobs:
             Pkg.instantiate()'
       - run: |
           julia --project=docs -e '
+            using Pkg
+            Pkg.add("Documenter")
             using Documenter: doctest
-            using MYPACKAGE
+            using InferCausalGraph
             doctest(InferCausalGraph)' # change MYPACKAGE to the name of your package
       - run: julia --project=docs docs/make.jl
         env:
