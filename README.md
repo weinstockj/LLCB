@@ -1,4 +1,6 @@
 # InferCausalGraph
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://weinstockj.github.io/LLCB/dev)
+[![CI](https://github.com/weinstockj/LLCB/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/weinstockj/LLCB/actions/workflows/ci.yml)
 
 This repo contains the implementation of the 'LLCB' method, which is described
 in Weinstock & Arce et al. 
