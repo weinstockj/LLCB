@@ -9,5 +9,6 @@ makedocs(
                 "Home" => "index.md"
                ])
 deploydocs(;
-    repo="github.com/weinstockj/LLCB.jl",
+    repo="github.com/weinstockj/LLCB",
+    devbranch = "dev"
 )
