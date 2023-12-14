@@ -4,10 +4,12 @@ on:
     branches:
       - master
       - dev
+      - public
   push:
     branches:
       - master
       - dev 
+      - public
     tags: '*'
 jobs:
   test:
