@@ -291,6 +291,29 @@ function test_linear_regress()
     @test (abs(estimate - truth) / truth) < .01
 end 
 
+function run_cylic_model_test()
+    println("$(now()) Now running cyclic model test")
+    m = sim_cyclic_expression_and_fit_model()
+    parsed = m[3]
+    parsed_threshold = parsed[parsed.PIP .>= .95, :]
+    println("$(now()) Done fitting model") # takes about 45 seconds
+
+    detected_edges = Set(collect(zip(parsed_threshold.row, parsed_threshold.col)))
+
+    true_edges = Set([
+        ("gene_5", "gene_1"),
+        ("gene_1", "gene_2"),
+        ("gene_2", "gene_3"),
+        ("gene_3", "gene_4"),
+        ("gene_4", "gene_5"),
+       ])
+    
+    intersect_edges = intersect(detected_edges, true_edges)
+    false_positive_edges = setdiff(detected_edges, true_edges)
+    @test length(intersect_edges) == 5
+    @test length(false_positive_edges) <= 1
+end
+
 # function test_bge()
 #     names = ["A", "B", "C", "D", "E", "F", "G"]
 #     path = "/home/users/jweinstk/.julia/dev/InferCausalGraph/test/bnlearn_gauss_net.csv"

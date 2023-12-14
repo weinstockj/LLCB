@@ -1,5 +1,6 @@
 using InferCausalGraph
 using Test
+using LinearAlgebra: eigen
 using Dates: now
 
 @testset "InferCausalGraph.jl" begin
@@ -7,7 +8,7 @@ using Dates: now
     # include("test_skeleton.jl")
     include("extended_test.jl")
     
-    function run_test()
+    function run_cylic_model_test()
         println("$(now()) Now running cyclic model test")
         m = sim_cyclic_expression_and_fit_model()
         parsed = m[3]
@@ -33,7 +34,19 @@ using Dates: now
     end
 
 
-    # run_test()
+    # run_cylic_model_test() # commented out because it's slow in unit testing env
     test_linear_regress()
 
+    function test_spectral_radius()
+        A = rand(10, 10)
+        A = A + A'
+        B = A .* A
+
+        max_eigen_value = last(eigen(B).values)
+        test_eigen_value = spectral_radius(A, 40, 1e-8)
+
+        @test abs(max_eigen_value - test_eigen_value) / max_eigen_value < .01
+    end
+
+    test_spectral_radius()
 end
