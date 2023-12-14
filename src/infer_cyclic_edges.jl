@@ -1,5 +1,5 @@
 """
-fit_cyclic_model(g, false, model_pars, sampling_pars)
+`fit_cyclic_model(g, false, model_pars, sampling_pars)`
 
 This fits the LLCB model itself. The  first argument must
 be an object of class `interventionGraph` . 
@@ -87,7 +87,7 @@ function fit_cyclic_model(g::interventionGraph, log_normalize::Bool, model_pars:
 end
 
 """
-parse_cyclic_chain(chains, posterior_adjacency, edges)
+`parse_cyclic_chain(chains, posterior_adjacency, edges)`
 
 ```julia-repl
     model = fit_cyclic_model(graph, false, model_pars, sampling_pars)
