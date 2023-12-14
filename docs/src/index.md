@@ -87,6 +87,7 @@ which correspond to unwanted global sources of variation.
 interventionGraph
 parse_cyclic_chain
 fit_cyclic_model
+spectral_radius
 ```
 
 ## Contact

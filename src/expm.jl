@@ -159,6 +159,14 @@ end
 # end
 #
 #
+"""
+`spectral_radius(W::Matrix{AbstractFloat})`
+
+Returns the largest eigenvalue of `W .* W` computed
+through power iteration. This is used in the model
+fitting process to penalize the adjacency matrix. 
+
+"""
 function spectral_radius(W, max_iter = 30, ϵ = 1e-7) 
     B = W .* W
     x₀ = Base.rand(size(B, 1))
@@ -174,7 +182,6 @@ function spectral_radius(W, max_iter = 30, ϵ = 1e-7)
         end
         λold = λ
     end
-    # println("λ=$λ")
     return λ
 end
 
