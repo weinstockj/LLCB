@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+InferCausalGraph = "a84f48dc-41b3-11ec-3a35-7145d5e4f339"
+
+[compat]
+Documenter = "1"

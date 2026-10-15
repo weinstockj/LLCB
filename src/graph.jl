@@ -69,6 +69,15 @@ function subset_to_interventions(data::DataFrame, metadata::DataFrame, intervent
     return data[:, vnames]
 end
 
+"""
+    posterior_graph(parsed_chain, beta_threshold = 0.02) -> MetaDiGraph
+
+Build a directed graph from a long-format edge table (the output of
+[`parse_cyclic_chain`](@ref) or [`parse_llcb_fit`](@ref)), keeping edges with
+`|estimate| ≥ beta_threshold`. Each vertex has a `:name` property (the gene)
+and each edge a `:weight` property (the estimate). Only genes with at least
+one retained edge become vertices.
+"""
 function posterior_graph(parsed_chain::DataFrame, beta_threshold::Float64 = 0.02)
 
     filtered_chain = @view parsed_chain[abs.(parsed_chain.estimate) .>= beta_threshold, :]
@@ -96,6 +105,13 @@ function posterior_graph(parsed_chain::DataFrame, beta_threshold::Float64 = 0.02
 end
 
 
+"""
+    topological_sort(G::BitMatrix) -> Union{Vector{Int},Nothing}
+
+Kahn's algorithm on the adjacency matrix `G` (`G[i, j]` means an edge
+`i → j`). Returns a topological order of the vertices, or `nothing` if `G`
+contains a cycle.
+"""
 function topological_sort(G::BitMatrix)
      
     g = deepcopy(G)
@@ -224,49 +240,21 @@ function scale_control_sds(g::interventionGraph, x::Matrix{Float64})
     return x ./ sds
 end
 
-function estimate_total_effects(g::interventionGraph, log_normalize::Bool, center=true, scale=true)
-    targets = setdiff(names(g.data), ["donor", "intervention"])
-    experiment_observations = get_experiment_observations(g)
-    
-    nv = length(targets)
-    ndonors = length(unique(g.donor))
+"""
+    get_cyclic_matrices(g, log_normalize, center = true, scale = true)
 
-    # rows are parents, columns readouts
-    total_effects = zeros(nv, nv)
+Legacy stage-2 construction: the block-diagonal system `t = T β` used in
+Weinstock & Arce et al. Retained for reproducibility only -- it is no longer
+part of the fitting path.
 
-    x = deepcopy(g.x)
-
-    if log_normalize
-        x = normalize(x)
-    end
-
-    if center
-        x = center_control_means(g, x)
-    end
-    if scale
-        x = scale_control_sds(g, x)
-    end
-   
-    for i in 1:nv
-        for j in 1:nv
-            if i == j
-                continue
-            else
-                # println("parent = $(targets[i]), child = $(targets[j])") 
-                total_effects[i, j] = linear_regress(
-                    x[experiment_observations[i], i], 
-                    x[experiment_observations[i], j]
-                )
-            end
-        end
-    end
-    
-    return total_effects
-end
-
+Note the memory profile: `T` is allocated dense at `nv(nv-1) × nv(nv-1)` before
+being sparsified, so the allocation grows as `nv^4` (≈ 780 MB at 100 genes,
+beyond addressable memory at a few hundred). The replacement likelihood in
+`moment_model.jl` never forms this matrix.
+"""
 function get_cyclic_matrices(g::interventionGraph, log_normalize::Bool, center=true, scale=true)
 
-    total_effects = estimate_total_effects(g, log_normalize, center, scale)
+    total_effects = estimate_total_effects_legacy(g, log_normalize, center, scale)
 
     T = zeros(g.nv * (g.nv - 1), g.nv * (g.nv - 1))
     t = zeros(g.nv * (g.nv - 1))
@@ -294,4 +282,67 @@ function get_cyclic_matrices(g::interventionGraph, log_normalize::Bool, center=t
     end
 
     return T, t, edges
+end
+
+
+# ---------------------------------------------------------------------------
+# interventionGraph adapters for stage 1 (see total_effects.jl for the core)
+# ---------------------------------------------------------------------------
+
+"""
+    perturbed_nodes(g::interventionGraph)
+
+Column indices of genes that were perturbed in at least one sample.
+"""
+function perturbed_nodes(g::interventionGraph)
+    return [j for j in 1:g.nv if any(view(g.interventions, :, j) .== 1)]
+end
+
+"""
+    estimate_total_effects(g::interventionGraph; kwargs...) -> TotalEffectEstimate
+
+Stage-1 total effects for an [`interventionGraph`](@ref). Forwards to the
+array-level method in `total_effects.jl`, which documents the keyword arguments.
+"""
+function estimate_total_effects(
+        g::interventionGraph;
+        verbose::Bool = true,
+        kwargs...,
+    )
+    targets = setdiff(names(g.data), ["donor", "intervention"])
+    return estimate_total_effects(
+        Matrix{Float64}(g.x), g.interventions, g.donor,
+        get_control_observations(g);
+        targets = targets, verbose = verbose, kwargs...,
+    )
+end
+
+"""
+    estimate_total_effects_legacy(g, log_normalize, center = true, scale = true)
+
+The estimator used in Weinstock & Arce et al.: for each ordered pair `(i, j)`,
+the univariate OLS slope of readout `j` on readout `i` over `KO(i) ∪ controls`,
+with no donor adjustment and no standard error. Retained so the published
+pipeline can be reproduced and A/B-compared.
+"""
+function estimate_total_effects_legacy(g::interventionGraph, log_normalize::Bool, center = true, scale = true)
+    targets = setdiff(names(g.data), ["donor", "intervention"])
+    experiment_observations = get_experiment_observations(g)
+
+    nv = length(targets)
+    total_effects = zeros(nv, nv)
+    x = deepcopy(g.x)
+
+    log_normalize && (x = normalize(x))
+    center && (x = center_control_means(g, x))
+    scale && (x = scale_control_sds(g, x))
+
+    for i in 1:nv, j in 1:nv
+        i == j && continue
+        total_effects[i, j] = linear_regress(
+            x[experiment_observations[i], i],
+            x[experiment_observations[i], j],
+        )
+    end
+    return total_effects
 end
