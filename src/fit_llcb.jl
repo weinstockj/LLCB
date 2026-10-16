@@ -270,7 +270,9 @@ function fit_llcb(
         t2 = time()
         Threads.@threads for c in 1:nchains
             rng = Random.MersenneTwister(seed + 1000 * c + (tag === :diagonal ? 77 : 0))
-            θ0 = copy(θstart)
+            # `local`: θ0 also names a variable of fit_llcb, and an unqualified
+            # assignment here would rebind that shared variable from every thread
+            local θ0 = copy(θstart)
             c > 1 && (θ0 .+= 0.01 .* randn(rng, length(θ0)))
             samples, stats = _nuts_chain(
                 mdl, θ0, n_adapt, n_samples;
@@ -302,10 +304,11 @@ function fit_llcb(
             e, r = _ess_rhat(Float64.(view(draws, :, i, :)))
             es[i] = e; rh[i] = r
         end
-        finite_rhat = filter(isfinite, rh)
+        # a non-finite R-hat (e.g. a coefficient stuck at one value) counts as
+        # failed mixing rather than being dropped from the maximum
         return (; draws, sum_b, sumsq_b, npos, npip, φ_chain, eps_chain, ndiv,
                 acc_chain, seconds, rh, es, tag,
-                rhat_max = isempty(finite_rhat) ? Inf : maximum(finite_rhat),
+                rhat_max = (isempty(rh) || any(!isfinite, rh)) ? Inf : maximum(rh),
                 div_frac = sum(ndiv) / (n_samples * nchains))
     end
 
@@ -317,28 +320,32 @@ function fit_llcb(
         (nchains > 1 && Threads.nthreads() > 1 ? 1 : blas_before) : Int(blas_threads)
     LinearAlgebra.BLAS.set_num_threads(blas_used)
 
-    primary_metric = pf_metric === nothing ?
-        AdvancedHMC.DiagEuclideanMetric(llcb_dimension(mdl)) : pf_metric
-    pass = sampling_pass(primary_metric, pf_metric === nothing,
-                         pf_metric === nothing ? :diagonal : :pathfinder)
-    verbose && @info "$(now()) NUTS ($(pass.tag)): $(round(pass.seconds; digits = 1))s, rhat max $(round(pass.rhat_max; digits = 3)), divergences $(round(100 * pass.div_frac; digits = 2))%"
+    local pass, retried
+    try
+        primary_metric = pf_metric === nothing ?
+            AdvancedHMC.DiagEuclideanMetric(llcb_dimension(mdl)) : pf_metric
+        pass = sampling_pass(primary_metric, pf_metric === nothing,
+                             pf_metric === nothing ? :diagonal : :pathfinder)
+        verbose && @info "$(now()) NUTS ($(pass.tag)): $(round(pass.seconds; digits = 1))s, rhat max $(round(pass.rhat_max; digits = 3)), divergences $(round(100 * pass.div_frac; digits = 2))%"
 
-    retried = false
-    if retry_on_poor_mixing && pass.tag === :pathfinder &&
-       (pass.rhat_max > rhat_tolerance || pass.div_frac > divergence_tolerance)
-        retried = true
-        verbose && @info "$(now()) mixing below tolerance; retrying with an adapted diagonal metric"
-        diag_metric = pf_var === nothing ?
-            AdvancedHMC.DiagEuclideanMetric(llcb_dimension(mdl)) :
-            AdvancedHMC.DiagEuclideanMetric(copy(pf_var))
-        alt = sampling_pass(diag_metric, true, :diagonal)
-        verbose && @info "$(now()) NUTS (diagonal): $(round(alt.seconds; digits = 1))s, rhat max $(round(alt.rhat_max; digits = 3)), divergences $(round(100 * alt.div_frac; digits = 2))%"
-        # keep whichever pass mixed better
-        score(x) = (max(x.rhat_max, 1.0) - 1.0) + 10 * x.div_frac
-        score(alt) < score(pass) && (pass = alt)
+        retried = false
+        if retry_on_poor_mixing && pass.tag === :pathfinder &&
+           (pass.rhat_max > rhat_tolerance || pass.div_frac > divergence_tolerance)
+            retried = true
+            verbose && @info "$(now()) mixing below tolerance; retrying with an adapted diagonal metric"
+            diag_metric = pf_var === nothing ?
+                AdvancedHMC.DiagEuclideanMetric(llcb_dimension(mdl)) :
+                AdvancedHMC.DiagEuclideanMetric(copy(pf_var))
+            alt = sampling_pass(diag_metric, true, :diagonal)
+            verbose && @info "$(now()) NUTS (diagonal): $(round(alt.seconds; digits = 1))s, rhat max $(round(alt.rhat_max; digits = 3)), divergences $(round(100 * alt.div_frac; digits = 2))%"
+            # keep whichever pass mixed better
+            score(x) = (max(x.rhat_max, 1.0) - 1.0) + 10 * x.div_frac
+            score(alt) < score(pass) && (pass = alt)
+        end
+    finally
+        # BLAS's thread count is process-wide: restore it even if sampling throws
+        LinearAlgebra.BLAS.set_num_threads(blas_before)
     end
-
-    LinearAlgebra.BLAS.set_num_threads(blas_before)
 
     # --- summaries ---------------------------------------------------------
     ntot = n_samples * nchains

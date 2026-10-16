@@ -19,6 +19,8 @@ include("core_tests.jl")
         test_packing_roundtrip()
         test_total_effects_recovery()
         test_total_effects_beats_pooled_ols()
+        test_donor_confounded_knockout()
+        test_full_covariance_scale()
     end
 
     @testset "interventionGraph plumbing" begin

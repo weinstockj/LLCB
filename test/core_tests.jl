@@ -305,3 +305,53 @@ function test_end_to_end_fit()
     @test all(0 .<= tbl.PIP .<= 1)
     @test all(0 .<= tbl.lsfr .<= 0.5)
 end
+
+
+# A knockout whose samples all come from a donor that contributes no controls:
+# the knockout indicator equals that donor's dummy, so its effect is not
+# identifiable and the row must be dropped rather than reported.
+function test_donor_confounded_knockout()
+    rng = MersenneTwister(5)
+    p = 5
+    B = _random_cyclic_graph(p; rng = rng)
+    X, ivm, donor, controls, interv = _simulate(B; rng = rng)
+    donor = copy(donor)
+    donor[interv .== 2] .= 99            # donor 99 has no control samples
+    te = estimate_total_effects(X, ivm, donor, controls; verbose = false)
+    k = findfirst(==(2), te.perturbed)
+    @test !any(te.active[k, :])
+    @test all(iszero, te.Θ[k, :])
+    others = [i for i in eachindex(te.perturbed) if i != k]
+    @test all(any(te.active[i, :]) for i in others)
+    # partial overlap stays identifiable: only half the knockout rows moved
+    donor2 = copy(donor)
+    idx = findall(interv .== 2)
+    donor2[idx[1:2:end]] .= 1
+    te2 = estimate_total_effects(X, ivm, donor2, controls; verbose = false)
+    @test any(te2.active[findfirst(==(2), te2.perturbed), :])
+end
+
+# With covariance = :full, the diagonal of each row's covariance must equal the
+# squared delta-method standard errors. Without shrinkage this is exact. With
+# shrinkage individual variances can move by up to ~2x, because they involve
+# the readout-knockout covariances that shrinkage pulls toward zero, so only the
+# overall scale is checked (a missing leverage factor would be off by ~5-10x).
+function test_full_covariance_scale()
+    rng = MersenneTwister(8)
+    p = 6
+    B = _random_cyclic_graph(p; rng = rng)
+    X, ivm, donor, controls, _ = _simulate(B; rng = rng)
+    for shrink in (false, true)
+        te = estimate_total_effects(X, ivm, donor, controls; covariance = :full,
+                                    shrink = shrink, verbose = false)
+        for k in eachindex(te.perturbed)
+            any(te.active[k, :]) || continue
+            if shrink
+                j = [j for j in axes(te.se, 2) if te.se[k, j] > 0]
+                @test 0.5 < median(diag(te.Σ[k])[j] ./ te.se[k, j] .^ 2) < 2
+            else
+                @test isapprox(diag(te.Σ[k]), te.se[k, :] .^ 2; rtol = 1e-8, atol = 1e-14)
+            end
+        end
+    end
+end

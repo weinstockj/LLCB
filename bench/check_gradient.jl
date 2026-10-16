@@ -60,7 +60,7 @@ for prior in (:normal, :studentt, :horseshoe)
     lp, ga = LogDensityProblems.logdensity_and_gradient(model, θ)
     gf = fd_gradient(model, θ)
     @printf("prior = %-11s dim = %5d  logp = %12.4f\n", prior, length(θ), lp)
-    worst = max(worst, report("gradient", ga, gf))
+    global worst = max(worst, report("gradient", ga, gf))
 end
 
 # stability branch: push B well past rho_max so the penalty is active
@@ -86,7 +86,7 @@ for u in 1:p, v in 1:p
     u == v && continue
     lhs = T[u, v]
     rhs = sum(T[u, w] * Bc[w, v] for w in 1:p if w != v)
-    resid = max(resid, abs(lhs - rhs))
+    global resid = max(resid, abs(lhs - rhs))
 end
 @printf("moment identity max residual = %.3e\n", resid)
 

@@ -74,7 +74,7 @@ fit, _ = fit_llcb(te; model = model, nchains = 4)
   approximation as the posterior.
 - **Memory grows as p² rather than p⁴.** The published dense `T` needed 64 GB
   at 300 genes; the new model state is 1.4 MB, and one gradient takes about
-  13 ms.
+  25 ms.
 - **A closed-form estimator** (`closed_form_coefficients`,
   `fit_llcb_closed_form`) inverts the identity exactly when every readout is
   perturbed. It gives a fast first look and the MAP starting point, but it is

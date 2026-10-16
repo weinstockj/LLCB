@@ -95,6 +95,14 @@ function _svd_lsq(D::Matrix{Float64}, Y::Matrix{Float64})
     return C, resid, rank, F, sinv
 end
 
+# Whether the k-th regression coefficient is identifiable: e_k must lie in the
+# row space of D, i.e. its projection onto the right singular vectors with
+# nonzero singular values must have unit norm. When a knockout's samples come
+# only from donors that contribute no controls, the knockout indicator is a
+# linear combination of the donor dummies and this fails.
+_estimable(F::SVD, sinv::Vector{Float64}, k::Int; tol::Float64 = 1e-8) =
+    sum(abs2(F.V[k, i]) for i in eachindex(sinv) if sinv[i] > 0; init = 0.0) > 1 - tol
+
 # (DᵀD)⁺[k, k] for the k-th regressor.
 _leverage(F::SVD, sinv::Vector{Float64}, k::Int) =
     sum(abs2(F.V[k, i] * sinv[i]) for i in eachindex(sinv))
@@ -212,6 +220,7 @@ function estimate_total_effects(
     knockdown_se = fill(NaN, q)
     nobs = zeros(Int, q)
     dof = zeros(Int, q)
+    confounded = zeros(Bool, q)
     Σ = covariance === :full ? Vector{Matrix{Float64}}(undef, q) : nothing
 
 
@@ -228,6 +237,11 @@ function estimate_total_effects(
         C, resid, rank, F, sinv = _svd_lsq(D, Y)
         df = n - rank
         df < 1 && return (k, false)
+        # knockout effect not separable from donor effects: no causal contrast
+        if !_estimable(F, sinv, 2)
+            confounded[k] = true
+            return (k, false)
+        end
 
         Δ = C[2, :]
         v = _leverage(F, sinv, 2)                 # (DᵀD)⁺[ko, ko]
@@ -267,7 +281,8 @@ function estimate_total_effects(
                 J[j, u] -= r[j]
             end
             J ./= a
-            Σ[k] = Symmetric(J * E * J') |> Matrix
+            # Cov(Δ) = v E, so Cov(r) = v J E Jᵀ; its diagonal equals se[k, :].^2
+            Σ[k] = Symmetric(v .* (J * E * J')) |> Matrix
         end
         return (k, true)
     end
@@ -285,7 +300,11 @@ function estimate_total_effects(
         end
     end
 
-    nbad = count(!, ok)
+    nconf = count(confounded)
+    if nconf > 0 && verbose
+        @warn "$nconf knockout(s) are confounded with donor (the knockout samples come from donors with no controls), so their effects are not identifiable and were dropped: $(targets[pert[findall(confounded)]])"
+    end
+    nbad = count(!, ok) - nconf
     if nbad > 0 && verbose
         @warn "$nbad knockout(s) had no identifiable knockdown and were dropped from the likelihood"
     end

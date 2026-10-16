@@ -90,7 +90,8 @@ ESS in the hundreds.
 `nv⁴`: 784 MB at 100 genes, 4.0 GB at 150, 12.7 GB at 200, 64 GB at 300. The
 replacement likelihood stores only the `p × p` total-effect matrix — 1.4 MB of
 model state at 300 genes, with one log-density-plus-gradient evaluation costing
-13 ms there with one BLAS thread (22 ms with eight; Julia 1.13).
+about 25 ms there with one BLAS thread when the stability penalty is active
+(34 ms with eight; Julia 1.13).
 
 ## The closed-form estimator
 

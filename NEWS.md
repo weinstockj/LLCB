@@ -42,6 +42,9 @@ bit-for-bit reproduction.
 - `fit_llcb_closed_form(te; ndraws)`: uncertainty by resampling stage-1 total
   effects through the closed form, with no MCMC. It is unweighted, so weak
   knockdowns can distort it badly (see below).
+- `estimate_total_effects` drops knockouts whose effect cannot be separated
+  from donor effects (all knockout samples from donors with no controls) and
+  names them in a warning.
 - `weak_knockdowns(te; threshold = √10)`: rows whose first-stage F statistic
   is below 10. `estimate_total_effects` warns when any exist.
 - `fit_llcb` now starts L-BFGS from the closed-form point when one exists
@@ -58,6 +61,12 @@ bit-for-bit reproduction.
   silently drop a knockout row. These are now `Bool` arrays. In a regression
   test, 0 of 200 threaded runs differed from the serial run; a `BitMatrix`
   control lost bits in 190 of 200.
+- **Stability-penalty gradient.** The largest singular value was found by
+  power iteration that stopped when the value converged, but the gradient uses
+  the singular vectors, which converge more slowly, leaving gradient errors up
+  to 1.7e-4 (relative). The vectors now come from an exact partial
+  eigensolver, computed only when the penalty is active, and the gradient
+  agrees with Richardson-extrapolated finite differences to ≤ 5e-10.
 - **Dispersion funnel.** Sampling the unidentified `φ` produced a funnel. On a
   5-gene test, fixing it took `rhat` from 2.18 to 1.006 with 0 divergences.
 
@@ -88,11 +97,13 @@ The port matches the settings the published analysis ran with:
   27–58% lower median RMSE. Its mean RMSE was close to the pooled slope's, and
   higher in one cell, because weak knockdowns (F < 10, 6–13% of rows) give
   heavy tails. Excluding those rows, it won in 96–100% of datasets.
-- **Scaling** (`bench/scaling.jl`, Julia 1.13). One log-density-plus-gradient
-  evaluation takes 1.7 ms at 100 genes, 12.7 ms at 300 and 57 ms at 500 with a
-  single BLAS thread. A single BLAS thread is fastest up to 300 genes (22.1 ms
-  with eight threads at 300) and about 25% slower at 500, which supports
-  pinning BLAS to one thread while chains sample in parallel.
+- **Scaling** (`bench/scaling.jl`, Julia 1.13, one BLAS thread). One
+  log-density-plus-gradient evaluation takes 3.4 ms at 100 genes and 24.6 ms
+  at 300 in benchmark matrices where the stability penalty is active (its
+  exact singular vectors account for about 8 ms at 300 genes), and 57 ms at
+  500, where it is inactive. One BLAS thread is fastest at 300 genes (33.8 ms
+  with eight) and 25–40% slower at 500, which supports pinning BLAS to one
+  thread while chains sample in parallel.
 - **Closed form with weak knockdowns.** In 10-gene simulations, RMSE was 0.082
   with no weak knockdowns and 1.1–5.3 with two. `fit_llcb` down-weights those
   rows by their standard errors and stayed at 0.08–0.16.

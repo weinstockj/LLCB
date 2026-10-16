@@ -282,3 +282,4 @@ say("")
 nfail = count(!, values(RESULTS))
 say(nfail == 0 ? "CORE_VALIDATION_PASS" : "CORE_VALIDATION_FAIL ($nfail failing)")
 close(OUT)
+nfail == 0 || exit(1)   # so CI fails when any check fails

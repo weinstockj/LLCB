@@ -234,7 +234,10 @@ end
 # the point: the original implementation drew a random start vector inside the
 # model, so repeated evaluations of the same parameters gave different log
 # densities. dσ/dB = u vᵀ exactly, with u, v the dominant singular vectors.
-function _sigma_max(B::Matrix{Float64}; iters::Int = 32, tol::Float64 = 1e-10)
+# Largest singular value only, by power iteration stopped when σ converges.
+# σ converges about twice as fast as the singular vectors, so this is cheap and
+# accurate enough to decide whether the stability penalty is active.
+function _sigma_value(B::Matrix{Float64}; iters::Int = 32, tol::Float64 = 1e-10)
     p = size(B, 2)
     v = fill(1.0 / sqrt(p), p)
     u = similar(v, size(B, 1))
@@ -242,18 +245,32 @@ function _sigma_max(B::Matrix{Float64}; iters::Int = 32, tol::Float64 = 1e-10)
     @inbounds for _ in 1:iters
         mul!(u, B, v)
         nu = norm(u)
-        nu <= 0 && return 0.0, zeros(size(B, 1)), v
+        nu <= 0 && return 0.0
         u ./= nu
         mul!(v, B', u)
         nv = norm(v)
-        nv <= 0 && return 0.0, u, zeros(p)
+        nv <= 0 && return 0.0
         v ./= nv
-        if abs(nv - σ) < tol * max(nv, 1.0)
-            σ = nv
-            break
-        end
+        abs(nv - σ) < tol * max(nv, 1.0) && return nv
         σ = nv
     end
+    return σ
+end
+
+# Leading singular triplet (σ, u, v), exact to machine precision: v is the top
+# eigenvector of BᵀB (LAPACK's partial symmetric eigensolver), u = Bv/σ. The
+# penalty's gradient is σ'(B) = u vᵀ, so the vectors must be accurate; power
+# iteration converges slowly when the top two singular values are close
+# (hundreds of steps for ratios ~1.02-1.07 in testing), and stopping it on σ
+# had left the gradient off by ~1e-5. Only needed when the penalty is active.
+function _sigma_max(B::Matrix{Float64})
+    p = size(B, 2)
+    E = eigen(Symmetric(B' * B), p:p)
+    v = E.vectors[:, 1]
+    u = B * v
+    σ = norm(u)
+    σ <= 0 && return 0.0, zeros(size(B, 1)), v
+    u ./= σ
     return σ, u, v
 end
 
@@ -377,7 +394,13 @@ function llcb_logdensity_and_gradient(model::LLCBModel, θ::AbstractVector{Float
     end
 
     # --- stability penalty -------------------------------------------------
-    σ, uvec, vvec = _sigma_max(B)
+    # cheap value-only check first; the singular vectors (for the gradient)
+    # are computed only when the penalty is active
+    if _sigma_value(B) > model.rho_max
+        σ, uvec, vvec = _sigma_max(B)
+    else
+        σ = 0.0; uvec = vvec = nothing
+    end
     if σ > model.rho_max
         e = (σ - model.rho_max) / model.stab_scale
         logp -= 0.5 * e^2
