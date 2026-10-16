@@ -1,47 +1,54 @@
 module InferCausalGraph
 
-using Graphs
-using MetaGraphs
+using LinearAlgebra
+using Statistics
+using Random
+using Dates
+using SparseArrays
+
 using CSV
 using DataFrames
-using Memoize
-using Dates
-using Statistics
-using LinearAlgebra
 using Distributions
-# using Flux
-using AdvancedMH
-using DynamicPPL
-using Turing
-# using Turing.Variational
-using Random
-using Pathfinder
-using ForwardDiff
-using Debugger
-using Accessors: Accessors
-using SparseArrays
-using ReverseDiff
-import AbstractDifferentiation as AD
-using Optim
-using Optimization
-using Pathfinder.Optim.LineSearches
-using Serialization
-using ProgressMeter
-using SciMLBase: SciMLBase
-using SpecialFunctions
+using Graphs
+using MetaGraphs
+using Memoize
 
-# Write your package code here.
-include("graph.jl")
+using ADTypes
+using AdvancedHMC
+using DynamicPPL
+using ForwardDiff
+using LineSearches
+using LogDensityProblems
+using MCMCChains
+using MCMCDiagnosticTools
+using Optim
+using Pathfinder
+using Turing
+
+include("total_effects.jl")      # stage 1 core: array level, stdlib only
+include("graph.jl")              # interventionGraph + stage-1 adapters
 include("data.jl")
 include("expm.jl")
-# include("DAGsampler.jl")
-# include("DAGproposal.jl")
-include("turing_models.jl")
+include("moment_model.jl")       # stage 2: exact moment likelihood, gradient, closed form; stdlib only
+include("fit_llcb.jl")           # MAP / Pathfinder / NUTS, closed-form resampling
+include("turing_models.jl")      # published Turing models, ported
+include("legacy_cyclic.jl")      # published stage 2, ported
 include("infer_cyclic_edges.jl")
 include("infer_edges.jl")
 include("utils.jl")
-# include("plot_graph.jl")
 
-export interventionGraph, parse_cyclic_chain, fit_cyclic_model, estimate_total_effects, spectral_radius
+export interventionGraph,
+       # stage 1
+       estimate_total_effects, estimate_total_effects_legacy, TotalEffectEstimate,
+       perturbed_nodes, weak_knockdowns,
+       # stage 2
+       llcb_model, LLCBModel, implied_total_effects, coefficients,
+       closed_form_coefficients, has_full_total_effects,
+       to_matrix, from_matrix, free_indices, initial_parameters, map_estimate,
+       # fitting and summaries
+       fit_llcb, fit_llcb_closed_form, LLCBFit, fit_cyclic_model, parse_llcb_fit,
+       # published method (ported)
+       fit_cyclic_model_legacy, joint_cyclic_model, parse_cyclic_chain,
+       get_cyclic_matrices, get_model_params, get_sampling_params, spectral_radius
 
 end

@@ -1,52 +1,44 @@
+
 using InferCausalGraph
 using Test
-using LinearAlgebra: eigen
-using Dates: now
+using LinearAlgebra
+using Statistics
+using Random
+using DataFrames
+
+# The fast tests exercise the numerical core directly. They do not touch the
+# sampling stack, so they run in a few seconds.
+include("core_tests.jl")
 
 @testset "InferCausalGraph.jl" begin
-    # Write your tests here.
-    # include("test_skeleton.jl")
-    include("extended_test.jl")
-    
-    function run_cylic_model_test()
-        println("$(now()) Now running cyclic model test")
-        m = sim_cyclic_expression_and_fit_model()
-        parsed = m[3]
-        parsed_threshold = parsed[parsed.PIP >= .95]
-        println("$(now()) Done fitting model")
-
-        parsed_threshold = run_test()
-
-        detected_edges = Set(collect(zip(parsed_threshold.row, parsed_threshold.col)))
-
-        true_edges = Set([
-            ("gene_5", "gene_1"),
-            ("gene_1", "gene_2"),
-            ("gene_2", "gene_3"),
-            ("gene_3", "gene_4"),
-            ("gene_4", "gene_5"),
-           ])
-        
-        intersect_edges = intersect(detected_edges, true_edges)
-        false_positive_edges = setdiff(detected_edges, true_edges)
-        @test length(intersect_edges) == 5
-        @test length(false_positive_edges) <= 1
+    @testset "numerical core" begin
+        test_moment_identity()
+        test_analytic_gradient()
+        test_closed_form()
+        test_log_density_determinism()
+        test_packing_roundtrip()
+        test_total_effects_recovery()
+        test_total_effects_beats_pooled_ols()
+        test_donor_confounded_knockout()
+        test_full_covariance_scale()
     end
 
-
-    # run_cylic_model_test() # commented out because it's slow in unit testing env
-    test_linear_regress()
-
-    function test_spectral_radius()
-        A = rand(10, 10)
-        A = A + A'
-        B = A .* A
-
-        max_eigen_value = last(eigen(B).values)
-        test_eigen_value = spectral_radius(A, 40, 1e-8)
-
-        @test abs(max_eigen_value - test_eigen_value) / max_eigen_value < .01
+    @testset "interventionGraph plumbing" begin
+        test_intervention_graph_roundtrip()
     end
 
-    test_spectral_radius()
+    @testset "legacy reference" begin
+        test_linear_regress_legacy()
+        test_spectral_radius_legacy()
+    end
+
+    # Full sampling runs are slow (minutes); enable with
+    #   LLCB_RUN_SLOW_TESTS=1 julia --project -e 'using Pkg; Pkg.test()'
+    if get(ENV, "LLCB_RUN_SLOW_TESTS", "0") == "1"
+        @testset "end-to-end fit" begin
+            test_end_to_end_fit()
+        end
+    else
+        @info "skipping the end-to-end sampling test; set LLCB_RUN_SLOW_TESTS=1 to run it"
+    end
 end

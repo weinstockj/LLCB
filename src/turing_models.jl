@@ -1,216 +1,123 @@
-@model function joint_cyclic_model(nv::Int64, pars, T, t, ::Type{S} = Float64) where {S}
-    
-    # β ~ filldist(Laplace(0, 5.0), nv * (nv - 1))
+# =============================================================================
+# Turing models from the published LLCB implementation, ported to
+# Turing 0.46 / DynamicPPL 0.42.
+#
+# Changes are confined to API mechanics; the statistical model is unchanged.
+#   * `::Type{T} = Float64` model arguments and `Array{T}(undef, ...)` buffers
+#     are replaced by buffers whose element type follows the sampled
+#     parameters, which is how current DynamicPPL propagates AD dual numbers.
+#   * `MvNormal(μ, σ::AbstractVector)` was removed from Distributions. In the
+#     pinned Distributions 0.25.104 it was deprecated to
+#     `MvNormal(μ, Diagonal(abs2.(σ)))`, i.e. the vector was read as standard
+#     deviations; that is written out explicitly here so the noise model is
+#     preserved exactly.
+#   * `Turing.@addlogprob!` is now exported as `@addlogprob!`.
+#
+# `joint_model_discrete_mcmc` (the discrete-DAG model) is not ported: it
+# depends on `DAG`, `DAGScorer` and `bge` from DAGsampler.jl / DAGproposal.jl,
+# which were not part of the v0.2.0b module build or the published analysis.
+# =============================================================================
+
+"""
+    joint_cyclic_model(nv, pars, T, t)
+
+The published LLCB stage-2 model: `t ~ MvNormal(T β, Diagonal(exp.(σ)²))` over
+the block system built by [`get_cyclic_matrices`](@ref), with a `Normal(0, 1)`
+prior on each direct effect, a spectral-radius penalty and a column-sum
+penalty on the adjacency matrix. Returns the `nv × nv` adjacency matrix `W`.
+
+`W[a, b] = β[(a - 1)(nv - 1) + b - (b > a)]`, so with `edges` from
+`get_cyclic_matrices`, coefficient `β[z]` for edge `edges[z] = (i => j)` is
+`W[j, i]`; [`parse_cyclic_chain`](@ref) reads it that way.
+
+Note that `spectral_radius` seeds power iteration with `Base.rand`, so this
+model's log density is not a deterministic function of its parameters. That is
+kept as published.
+"""
+@model function joint_cyclic_model(nv::Int, pars, T, t)
     β ~ filldist(Normal(0, 1.0), nv * (nv - 1))
-    # parents are rows, children are columns
-    W = Array{S}(undef, nv, nv) # I - the entire adjacency matrix
-    # σₓ ~ Normal(-3.0, 4.0)
-    σₓ ~ filldist(Normal(-3, 5), nv)
+    σₓ ~ filldist(Normal(-3, 5), nv)               # log standard deviations
     temp_σₓ = reduce(vcat, (fill(x, nv - 1) for x in σₓ))
 
-    # @simd for i in 1:nv
-    @inbounds for i in 1:nv
-        @inbounds for j in 1:nv
-            if i == j
-                W[i, j] = 0
-            else
-                # @assert i - Int(i > j) <= (nv - 1)
-                # W[i, j] = β[i - Int(i > j) + j]
-                alt_idx = (i - 1) * (nv - 1) + j - Int(j > i)
-                W[i, j] = β[alt_idx]
-            end
-        end
+    W = zeros(eltype(β), nv, nv)
+    @inbounds for i in 1:nv, j in 1:nv
+        i == j && continue
+        W[i, j] = β[(i - 1) * (nv - 1) + j - Int(j > i)]
     end
-    # Wdet = det(W)
-    # Turing.@addlogprob! loglikelihood(Normal(0.0, 0.3), Wdet)
+
     R = spectral_radius(W)
-    # Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:R_scale]), R)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, 10.0), R)
-    # penalize number of parents assigned to each child node
-    Turing.@addlogprob! sum(loglikelihood(Normal(0.0, nv * 0.1), x) for x in vec(sum(abs.(W); dims = 1)))
-    
-    t ~ MvNormal(T*β, I * exp.(temp_σₓ))
-    # t ~ MvNormal(T*β, I * exp(σₓ))
-    # t .~ Normal.(T*β, 0.1) 
+    @addlogprob! loglikelihood(Normal(0.0, 10.0), R)
+    # penalise the number of parents assigned to each child node
+    @addlogprob! sum(loglikelihood(Normal(0.0, nv * 0.1), x) for x in vec(sum(abs.(W); dims = 1)))
+
+    t ~ MvNormal(T * β, Diagonal(exp.(temp_σₓ) .^ 2))
     return W
-    # return β
 end
 
-@model function joint_model_discrete_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
+"""
+    joint_model_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars)
 
-    β ~ DAG(nv)
-
-    θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
-    ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
-
-    # println("β = $β")
-    scorer = DAGScorer(BitMatrix(β))
-    bias = Array{T}(undef, n, nv)
-    for i in 1:n
-        for j in 1:nv
-            bias[i, j] = μ + θ[j] + ω[donors[i]]
-        end
-    end
-
-    scores = Array{T}(undef, nv)
-    for j in 1:nv
-        observed = interventions[:, j] .!= 1
-        perturbed_score = bge(scorer, x[observed, :] .- bias[observed, :]) / nv
-        # println("perturbed_score = $perturbed_score")
-        Turing.@addlogprob! perturbed_score
-        scores[j] = perturbed_score
-    end
-
-    return β
-end
-
-@model function joint_model_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
-    β ~ filldist(Laplace(0, pars[:β_scale]), nv, nv) # this skips the diagonal elements
+Published direct-likelihood model on expression data (Laplace prior on `β`,
+L1/L2 penalties, gene and donor offsets). Not used by the LLCB cyclic fit.
+"""
+@model function joint_model_mcmc(x, n, nv, donors, n_donors, interventions, μ, pars)
+    β ~ filldist(Laplace(0, pars[:β_scale]), nv, nv)
     l1 = norm(β, 1)
     l2 = norm(β, 2)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), l1 * nv * (nv - 1) / 20)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l2_penalty]), l2 * nv * (nv - 1) / 20) 
+    @addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), l1 * nv * (nv - 1) / 20)
+    @addlogprob! loglikelihood(Normal(0.0, pars[:l2_penalty]), l2 * nv * (nv - 1) / 20)
 
     θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
     ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
-    # σₓ ~ truncated(Cauchy(0, pars[:σₓ_scale]), 0, Inf)
     σₓ ~ Normal(-2.0, 1.0)
 
-
-    λₓ = Array{T}(undef, n, nv)
-    for i in 1:n
-        for j in 1:nv
-            vec = 1:nv .!= j
-            indices = (1:nv)[vec]
-            ν = sum(β[indices, j] .* x[i, indices])
-
-            λₓ[i, j] = μ + θ[j] + ω[donors[i]] + ν
-            if interventions[i, j] != 1 # only count instances when target gene is not perturbed
-                x[i, j] ~ Normal(λₓ[i, j], exp(σₓ) + .0001)
-            end
+    S = promote_type(eltype(β), eltype(θ), eltype(ω), typeof(σₓ))
+    λₓ = zeros(S, n, nv)
+    for i in 1:n, j in 1:nv
+        indices = (1:nv)[1:nv .!= j]
+        ν = sum(β[indices, j] .* x[i, indices])
+        λₓ[i, j] = μ + θ[j] + ω[donors[i]] + ν
+        if interventions[i, j] != 1      # only count samples where gene j is not perturbed
+            x[i, j] ~ Normal(λₓ[i, j], exp(σₓ) + .0001)
         end
     end
-
     return β
 end
-   
 
+"""
+    joint_model(x, n, nv, donors, n_donors, interventions, μ, pars)
 
-@model function joint_model(x, n, nv, donors, n_donors, interventions, μ, pars, ::Type{T} = Float64) where {T}
-   
-    # β ~ filldist(Laplace(0, 0.1), nv - 1, nv)
-    # β = Array{T}(undef, nv, nv)
-
-    # global_scale_a ~ truncated(Normal(0, 0.1), 0, Inf)
-    # global_scale_b ~ InverseGamma(0.5, 0.5)
-    # τ = global_scale_a * sqrt(global_scale_b)
-    # τ ~ truncated(TDist(3), 0, Inf)
-
-    # local_scale_a ~ filldist(truncated(Normal(0, 0.1), 0, Inf), nv - 1, nv)
-    # local_scale_b ~ filldist(InverseGamma(0.5, 0.5), nv - 1, nv)
-    #
-    # λ = local_scale_a .* sqrt.(local_scale_b)
-    # λ = Array{T}(undef, nv, nv - 1)
-
-    # λ .~ truncated(TDist(3), 0, Inf)
-    # β ~ Normal.(0, .01 * τ * λ)
-    # for i in 1:(nv - 1)
-    #     for j in 1:nv
-    #         β[i, j] ~ Normal(0, .001 + τ * λ[i, j])
-    #     end
-    # end
-    #
-    # β .~ Normal(0, .01)
-
-    # β .~ Normal.(0, .01 .* λ .* τ)
-    # 
-    # for i in 1:nv
-    #     for j in 1:nv
-    #         # β[i, j] ~ Normal(0, 0.005)
-    #         if i == j
-    #             β[i, j] ~ Normal(0.0, .0001)
-    #         else
-    #             β[i, j] ~ MixtureModel(Normal, [(0.0, 0.001), (0.0, 0.10)], [0.90, 0.10])
-    #         end
-    #     end
-    # end
-    β ~ filldist(Laplace(0, pars[:β_scale]), nv - 1, nv) # this skips the diagonal elements
-    # β ~ filldist(MixtureModel(Normal, [(0.0, 0.0001), (0.0, 0.10)], [0.98, 0.02]), nv, nv)
-    # β ~ filldist(UnivariateGMM([0.0, 0.0], [0.02, 0.30], Categorical([0.6, 0.4])), nv - 1, nv)
-    W = Array{T}(undef, nv, nv) # I - the entire adjacency matrix
-
-    for i in 1:nv
-        for j in 1:nv
-            if i == j
-                W[i, j] = 0
-            else
-                @assert i - Int(i > j) <= (nv - 1)
-                W[i, j] = β[i - Int(i > j), j]
-            end
-        end
+Published direct-likelihood model with the spectral-radius penalty on the
+reduced `(nv - 1) × nv` coefficient layout. Not used by the LLCB cyclic fit.
+"""
+@model function joint_model(x, n, nv, donors, n_donors, interventions, μ, pars)
+    β ~ filldist(Laplace(0, pars[:β_scale]), nv - 1, nv)   # skips the diagonal
+    W = zeros(eltype(β), nv, nv)
+    for i in 1:nv, j in 1:nv
+        i == j && continue
+        W[i, j] = β[i - Int(i > j), j]
     end
 
-
-    # R = det(W) # I - adjacency
-    # R = notears(W)
     R = spectral_radius(W)
-    # R ~ Normal(0, 0.01)
-    # if rand(Bernoulli(.004), 1)[1]
-        # println("W = $W")
-        # println("R = $R")
-    # end
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:R_scale]), R)
-    # OP = opnorm(W, 1)
+    @addlogprob! loglikelihood(Normal(0.0, pars[:R_scale]), R)
     l1 = norm(W, 1)
     l2 = norm(W, 2)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), l1 * nv * (nv - 1) / 20)
-    Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:l2_penalty]), l2 * nv * (nv - 1) / 20) 
-    # β_sum = sum(β)
-    # Turing.@addlogprob! loglikelihood(Normal(0.0, pars[:β_sum_scale]), β_sum)
-    #
-    # σ_θ ~ truncated(Normal(0, 1.0), 0, Inf)
-    #
+    @addlogprob! loglikelihood(Normal(0.0, pars[:l1_penalty]), l1 * nv * (nv - 1) / 20)
+    @addlogprob! loglikelihood(Normal(0.0, pars[:l2_penalty]), l2 * nv * (nv - 1) / 20)
+
     θ ~ filldist(Normal(0, pars[:θ_scale]), nv)
-    # θ ~ MvNormal(zeros(nv), I * .001)
-    # θ ~ filldist(Normal(0, σ_θ), nv)
-
-    
-    # σ_w ~ truncated(Normal(0, 1), 0, Inf)
     ω ~ filldist(Normal(0, pars[:ω_scale]), n_donors)
-    # ω ~ MvNormal(zeros(n_donors), I * .001)
+    σₓ ~ Normal(-2, 1.0)       # log scale
 
-    # σₓ ~ truncated(Cauchy(0, pars[:σₓ_scale]), 0, Inf)
-    σₓ ~ Normal(-2, 1.0) # log scale
-
-    λₓ = Array{T}(undef, n, nv)
-    λₓ
-    for i in 1:n
-        for j in 1:nv
-            vec = 1:nv .!= j
-            indices = (1:nv)[vec]
-            ν = sum(β[:, j] .* x[i, indices])
-            # ν = sum(β[indices, j] .* x[i, indices])
-
-            # gene_vec = ones(nv) .* (1:nv .== j)
-
-            λₓ[i, j] = μ + θ[j] + ω[donors[i]] + ν
-            # λₓ[i, j] = μ + θ'gene_vec + ω[donors[i]] + ν
-            # if rand(Bernoulli(.000005), 1)[1]
-            #     println("j = $(j); indices = $(indices)")
-            #     println("μ = $(μ); θ[j] = $(θ[j]); ν = $(ν)")
-            #     println("intervene[$i, $j] = $(interventions[i, j]); x[$i, $j] =$(x[i, j]); λ[$i, $j] = $(exp(λ[i, j]))")
-            # end
-            # Turing.@addlogprob! loglikelihood(Normal(μ + θ[j] + ω[donors[i]] + sum(β[indices, j] .* x[i, indices]), σₓ + .0001), x[i, j]) * (1.0 - interventions[i, j])
-            if interventions[i, j] != 1 # only count instances when target gene is not perturbed
-                # x[i, j] ~ LogNormal(λₓ[i, j], σₓ + .0001)
-                x[i, j] ~ Normal(λₓ[i, j], exp(σₓ) + .0001)
-                # x[i, j] ~ Normal(μ + θ'gene_vec + ω'donors[i, :] + sum(β[indices, j] .* x[i, indices]), σₓ + .0001)
-                # x[i, j] ~ Normal(μ + θ'gene_vec + ω'donors[i, :] + sum(β[:, j] .* (x[i, :]'vec)), σₓ + .0001)
-
-            end
+    S = promote_type(eltype(β), eltype(θ), eltype(ω), typeof(σₓ))
+    λₓ = zeros(S, n, nv)
+    for i in 1:n, j in 1:nv
+        indices = (1:nv)[1:nv .!= j]
+        ν = sum(β[:, j] .* x[i, indices])
+        λₓ[i, j] = μ + θ[j] + ω[donors[i]] + ν
+        if interventions[i, j] != 1
+            x[i, j] ~ Normal(λₓ[i, j], exp(σₓ) + .0001)
         end
     end
-
     return W
-
 end
